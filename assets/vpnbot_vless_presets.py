@@ -25,9 +25,11 @@ XRAY_RESERVED_PORTS_SYSCTL_FILE = Path(os.environ.get("VPNBOT_XRAY_RESERVED_PORT
 XRAY_RESERVED_EXTRA_PORTS = os.environ.get("VPNBOT_XRAY_RESERVED_EXTRA_PORTS", "10086")
 DEFAULT_TLS_CERT = os.environ.get("NGINX_SSL_CERT", "/etc/nginx/ssl/vpnbot/fullchain.pem")
 DEFAULT_TLS_KEY = os.environ.get("NGINX_SSL_KEY", "/etc/nginx/ssl/vpnbot/privkey.pem")
+DEFAULT_TLS_FALLBACK_DEST = os.environ.get("VPNBOT_TLS_FALLBACK_DEST", "127.0.0.1:10445")
 PORT_MIN = 20000
 PORT_MAX = 45000
 REALITY_FINGERPRINT = "chrome"
+REALITY_SERVER_NAMES_SCOPE = os.environ.get("VPNBOT_REALITY_SERVER_NAMES_SCOPE", "primary").strip().lower()
 REALITY_DEST_CHECK = os.environ.get("VPNBOT_REALITY_DEST_CHECK", "1").strip().lower() not in {"0", "false", "no", "off", "нет"}
 REALITY_DEST_CHECK_TIMEOUT = float(os.environ.get("VPNBOT_REALITY_DEST_CHECK_TIMEOUT", "4"))
 REALITY_DEST_CHECK_CACHE: dict[str, bool] = {}
@@ -130,7 +132,7 @@ def has_no_flow_marker(text: str) -> bool:
     return "no flow" in value or "no-flow" in value or "noflow" in value
 
 
-def reality_server_names(primary: str) -> list[str]:
+def reality_sni_pool(primary: str = "") -> list[str]:
     names: list[str] = []
     for raw in [
         primary,
@@ -145,6 +147,26 @@ def reality_server_names(primary: str) -> list[str]:
     return names or [normalize_sni(primary)]
 
 
+def reality_server_names(primary: str) -> list[str]:
+    normalized = normalize_sni(primary)
+    if REALITY_SERVER_NAMES_SCOPE in {"pool", "full", "wide", "all"}:
+        return reality_sni_pool(primary)
+    return [normalized] if normalized else []
+
+
+def reality_primary_server_name(row: dict) -> str:
+    stream = row.get("streamSettings") or {}
+    reality = stream.get("realitySettings") or {}
+    for item in reality.get("serverNames") or []:
+        normalized = normalize_sni(item)
+        if normalized:
+            return normalized
+    dest = normalize_reality_dest(str(reality.get("dest") or ""))
+    if dest:
+        return dest.rsplit(":", 1)[0]
+    return ""
+
+
 def spec_route_sni_values(spec: dict) -> set[str]:
     if spec.get("security") == "reality":
         return set(reality_server_names(str(spec.get("domain") or "")))
@@ -155,7 +177,7 @@ def spec_route_sni_values(spec: dict) -> set[str]:
 
 
 def list_reality_sni_pool() -> list[str]:
-    return reality_server_names("")
+    return reality_sni_pool("")
 
 
 def build_reality_line_from_sni(sni: str, *, protocol: str = "vless", network: str = "tcp", no_flow: bool = False, mode: str = "direct-random") -> str:
@@ -558,7 +580,11 @@ def build_xray_catalog_groups() -> list[dict]:
             )
 
     tls_items = [
+        {"id": "xray_vless_xhttp_tls_443", "title": f"443 VLESS XHTTP TLS {tls_domain}", "line": f"443 vless xhttp tls {tls_domain}"},
+        {"id": "xray_vless_tcp_tls_443", "title": f"443 VLESS TCP TLS {tls_domain}", "line": f"443 vless tcp tls {tls_domain}"},
         {"id": "xray_vmess_tls_8443", "title": f"8443 VMESS TCP TLS {tls_domain}", "line": f"8443 vmess tcp tls {tls_domain}"},
+        {"id": "xray_trojan_tcp_tls_8443", "title": f"8443 TROJAN TCP TLS {tls_domain}", "line": f"8443 trojan tcp tls {tls_domain}"},
+        {"id": "xray_vless_xhttp_tls_8443", "title": f"8443 VLESS XHTTP TLS {tls_domain}", "line": f"8443 vless xhttp tls {tls_domain}"},
         {"id": "xray_vless_tls_public", "title": f"случайный direct-порт VLESS TCP TLS {tls_domain}", "line": f"vless tcp tls {tls_domain} случайный direct-порт"},
         {"id": "xray_trojan_tls_public", "title": f"случайный direct-порт TROJAN TCP TLS {tls_domain}", "line": f"trojan tcp tls {tls_domain} случайный direct-порт"},
         {"id": "xray_vless_xhttp_tls_public", "title": f"случайный direct-порт VLESS XHTTP TLS {tls_domain}", "line": f"vless xhttp tls {tls_domain} случайный direct-порт"},
@@ -749,6 +775,8 @@ def match_existing_xray(
     security: str,
     sni: str,
     port: int | None = None,
+    publication_mode: str | None = None,
+    external_port: int | None = None,
     no_flow: bool | None = None,
 ) -> dict | None:
     wanted_sni = normalize_sni(sni)
@@ -764,6 +792,12 @@ def match_existing_xray(
         row_port = int(row.get("port") or 0)
         if port is not None and row_port != int(port):
             continue
+        if publication_mode:
+            row_publication = parse_publication_spec(str(row.get("tag") or ""))
+            if row_publication["mode"] != publication_mode:
+                continue
+            if publication_mode == "shared" and external_port is not None and row_publication.get("port") != int(external_port):
+                continue
         stream = row.get("streamSettings") or {}
         row_network = str(stream.get("network") or "").lower()
         row_security = str(stream.get("security") or "").lower()
@@ -772,8 +806,11 @@ def match_existing_xray(
         if not wanted_sni:
             return row
         if security == "reality":
-            reality = stream.get("realitySettings") or {}
-            values = {normalize_sni(item) for item in (reality.get("serverNames") or []) if str(item).strip()}
+            primary = reality_primary_server_name(row)
+            values = {primary} if primary else set()
+            if REALITY_SERVER_NAMES_SCOPE in {"pool", "full", "wide", "all"}:
+                reality = stream.get("realitySettings") or {}
+                values = {normalize_sni(item) for item in (reality.get("serverNames") or []) if str(item).strip()}
         elif security == "tls":
             tls = stream.get("tlsSettings") or {}
             values = set()
@@ -947,6 +984,8 @@ def build_xray_payload(spec: dict, rows: list[dict]) -> tuple[dict | None, str]:
         security=security,
         sni=domain,
         port=listen_port if spec.get("mode") == "direct" else None,
+        publication_mode=str(spec.get("mode") or ""),
+        external_port=int(spec["external_port"]) if spec.get("mode") == "shared" and spec.get("external_port") else None,
         no_flow=bool(spec.get("no_flow")) if protocol == "vless" and network == "tcp" and security == "reality" else None,
     )
     if existing:
@@ -1013,6 +1052,8 @@ def build_xray_payload(spec: dict, rows: list[dict]) -> tuple[dict | None, str]:
             },
         }
     elif security == "tls":
+        if protocol in {"vless", "trojan"} and DEFAULT_TLS_FALLBACK_DEST:
+            settings["fallbacks"] = [{"dest": DEFAULT_TLS_FALLBACK_DEST}]
         alpn = ["h2", "http/1.1"] if network == "grpc" else ["http/1.1"]
         stream_settings["tlsSettings"] = {
             "serverName": domain,

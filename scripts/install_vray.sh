@@ -65,6 +65,7 @@ VPNBOT_SERVER_ID="${VPNBOT_SERVER_ID:-}"
 SHARED_HTTP_DOMAIN="${SHARED_HTTP_DOMAIN:-}"
 HTTP_FRONTEND_LOCAL_PORT="${HTTP_FRONTEND_LOCAL_PORT:-10443}"
 HTTP_FRONTEND_PROXY_LOCAL_PORT="${HTTP_FRONTEND_PROXY_LOCAL_PORT:-10444}"
+HTTP_FALLBACK_LOCAL_PORT="${HTTP_FALLBACK_LOCAL_PORT:-10445}"
 NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-}"
 NGINX_PANEL_LOCATION="${NGINX_PANEL_LOCATION:-}"
 NGINX_SSL_CERT="${NGINX_SSL_CERT:-/etc/nginx/ssl/vpnbot/fullchain.pem}"
@@ -2824,6 +2825,110 @@ EOF
 }
 
 
+install_certbot_retry_unit() {
+    local cert_domains=("$@")
+    if [[ "${#cert_domains[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    local primary_domain="${cert_domains[0]}"
+    local retry_email="${LETSENCRYPT_EMAIL:-admin@${primary_domain}}"
+    local domains_joined="${cert_domains[*]}"
+
+    cat > /etc/vpnbot-certbot-retry.env <<EOF
+# Written by VPnBot installer. Used after temporary Let's Encrypt failures.
+VPNBOT_CERTBOT_DOMAINS=$(printf '%q' "${domains_joined}")
+VPNBOT_CERTBOT_PRIMARY_DOMAIN=$(printf '%q' "${primary_domain}")
+VPNBOT_CERTBOT_EMAIL=$(printf '%q' "${retry_email}")
+NGINX_SSL_CERT=$(printf '%q' "${NGINX_SSL_CERT}")
+NGINX_SSL_KEY=$(printf '%q' "${NGINX_SSL_KEY}")
+EOF
+
+    cat > /usr/local/bin/vpnbot-certbot-retry <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+env_file="/etc/vpnbot-certbot-retry.env"
+if [[ ! -r "${env_file}" ]]; then
+    exit 0
+fi
+
+# shellcheck disable=SC1090
+source "${env_file}"
+
+read -r -a cert_domains <<< "${VPNBOT_CERTBOT_DOMAINS:-}"
+if [[ "${#cert_domains[@]}" -eq 0 ]]; then
+    exit 0
+fi
+
+primary_domain="${VPNBOT_CERTBOT_PRIMARY_DOMAIN:-${cert_domains[0]}}"
+retry_email="${VPNBOT_CERTBOT_EMAIL:-admin@${primary_domain}}"
+ssl_cert="${NGINX_SSL_CERT:-/etc/nginx/ssl/vpnbot/fullchain.pem}"
+ssl_key="${NGINX_SSL_KEY:-/etc/nginx/ssl/vpnbot/privkey.pem}"
+
+certbot_args=()
+for host in "${cert_domains[@]}"; do
+    [[ -n "${host}" ]] || continue
+    certbot_args+=("-d" "${host}")
+done
+
+if [[ "${#certbot_args[@]}" -eq 0 ]]; then
+    exit 0
+fi
+
+if certbot certonly --nginx "${certbot_args[@]}" -m "${retry_email}" --agree-tos --non-interactive; then
+    mkdir -p "$(dirname "${ssl_cert}")" "$(dirname "${ssl_key}")"
+    rm -f "${ssl_cert}" "${ssl_key}"
+    ln -s "/etc/letsencrypt/live/${primary_domain}/fullchain.pem" "${ssl_cert}"
+    ln -s "/etc/letsencrypt/live/${primary_domain}/privkey.pem" "${ssl_key}"
+    nginx -t
+    systemctl reload nginx || systemctl restart nginx
+    if [[ -x /usr/local/bin/vpnbot-xray-sync-routes ]]; then
+        /usr/local/bin/vpnbot-xray-sync-routes || true
+    elif [[ -x /usr/local/bin/vpnbot-xui-sync-routes ]]; then
+        /usr/local/bin/vpnbot-xui-sync-routes || true
+    fi
+    systemctl disable --now vpnbot-certbot-retry.timer >/dev/null 2>&1 || true
+fi
+
+# Temporary failures, including Let's Encrypt rate limits, must not put systemd
+# into a failed loop. The timer will try again later.
+exit 0
+EOF
+    chmod 0755 /usr/local/bin/vpnbot-certbot-retry
+
+    cat > /etc/systemd/system/vpnbot-certbot-retry.service <<'EOF'
+[Unit]
+Description=Retry VPnBot Let's Encrypt certificate issuance
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vpnbot-certbot-retry
+EOF
+
+    cat > /etc/systemd/system/vpnbot-certbot-retry.timer <<'EOF'
+[Unit]
+Description=Retry VPnBot Let's Encrypt certificate issuance periodically
+
+[Timer]
+OnBootSec=15min
+OnActiveSec=1h
+OnUnitActiveSec=6h
+Persistent=true
+Unit=vpnbot-certbot-retry.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now vpnbot-certbot-retry.timer >/dev/null 2>&1 || true
+    warn "Let's Encrypt retry timer installed: vpnbot-certbot-retry.timer"
+}
+
+
 ensure_bootstrap_tls_cert() {
     if [[ -s "${NGINX_SSL_CERT}" && -s "${NGINX_SSL_KEY}" ]]; then
         return 0
@@ -2863,8 +2968,10 @@ issue_or_create_cert() {
             NGINX_SSL_CERT="/etc/nginx/ssl/vpnbot/fullchain.pem"
             NGINX_SSL_KEY="/etc/nginx/ssl/vpnbot/privkey.pem"
             log "Let's Encrypt certificate issued for: ${cert_domains[*]}"
+            systemctl disable --now vpnbot-certbot-retry.timer >/dev/null 2>&1 || true
             return 0
         fi
+        install_certbot_retry_unit "${cert_domains[@]}"
         warn "Let's Encrypt issuance failed; falling back to self-signed certificate"
     fi
 
@@ -2962,6 +3069,37 @@ ${panel_location_block}    # Dynamic shared HTTP routes are generated here.
 </html>';
     }
 }
+
+server {
+    listen 127.0.0.1:${HTTP_FALLBACK_LOCAL_PORT};
+    server_name ${NGINX_SERVER_NAME};
+    default_type text/html;
+
+    location / {
+        return 200 '<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service Portal</title>
+  <style>
+    body{margin:0;font-family:Verdana,Arial,sans-serif;background:#f5f7fb;color:#1f2937}
+    .wrap{max-width:760px;margin:12vh auto;padding:40px;background:white;border-radius:18px;box-shadow:0 12px 40px rgba(31,41,55,.12)}
+    h1{margin:0 0 14px;font-size:32px;font-weight:700}
+    p{font-size:16px;line-height:1.55;color:#4b5563}
+    .muted{margin-top:28px;font-size:13px;color:#9ca3af}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Service Portal</h1>
+    <p>Сайт временно обслуживается. Пожалуйста, повторите запрос позже.</p>
+    <p class="muted">Request ID: vpnbot-edge</p>
+  </main>
+</body>
+</html>';
+    }
+}
 EOF
 
     ln -sf "${NGINX_HTTP_SITE_FILE}" /etc/nginx/sites-enabled/vpnbot_vray_http.conf
@@ -2991,6 +3129,7 @@ write_installer_state() {
     SSL_KEY_VALUE="${NGINX_SSL_KEY}" \
     HTTP_FRONTEND_LOCAL_PORT_VALUE="${HTTP_FRONTEND_LOCAL_PORT}" \
     HTTP_FRONTEND_PROXY_LOCAL_PORT_VALUE="${HTTP_FRONTEND_PROXY_LOCAL_PORT}" \
+    HTTP_FALLBACK_LOCAL_PORT_VALUE="${HTTP_FALLBACK_LOCAL_PORT}" \
     INSTALLER_STATE_FILE="${XUI_INSTALLER_STATE_FILE}" \
     python3 - <<'PY'
 import json
@@ -3018,6 +3157,7 @@ payload = {
     "ssl_key": os.environ["SSL_KEY_VALUE"],
     "http_frontend_local_port": int(os.environ["HTTP_FRONTEND_LOCAL_PORT_VALUE"]),
     "http_frontend_proxy_local_port": int(os.environ["HTTP_FRONTEND_PROXY_LOCAL_PORT_VALUE"]),
+    "http_fallback_local_port": int(os.environ.get("HTTP_FALLBACK_LOCAL_PORT_VALUE", "10445")),
 }
 Path(os.environ["INSTALLER_STATE_FILE"]).write_text(
     json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -3167,6 +3307,7 @@ write_xray_core_installer_state() {
     SSL_KEY_VALUE="${NGINX_SSL_KEY}" \
     HTTP_FRONTEND_LOCAL_PORT_VALUE="${HTTP_FRONTEND_LOCAL_PORT}" \
     HTTP_FRONTEND_PROXY_LOCAL_PORT_VALUE="${HTTP_FRONTEND_PROXY_LOCAL_PORT}" \
+    HTTP_FALLBACK_LOCAL_PORT_VALUE="${HTTP_FALLBACK_LOCAL_PORT}" \
     XRAY_CORE_SMOKE_ENABLE_VALUE="${XRAY_CORE_SMOKE_ENABLE}" \
     XRAY_CORE_SMOKE_PORT_VALUE="${XRAY_CORE_SMOKE_PORT_EFFECTIVE}" \
     XRAY_CORE_SMOKE_DOMAIN_VALUE="${XRAY_CORE_SMOKE_DOMAIN}" \
@@ -3255,6 +3396,7 @@ payload = {
     "ssl_key": os.environ["SSL_KEY_VALUE"],
     "http_frontend_local_port": int(os.environ["HTTP_FRONTEND_LOCAL_PORT_VALUE"]),
     "http_frontend_proxy_local_port": int(os.environ["HTTP_FRONTEND_PROXY_LOCAL_PORT_VALUE"]),
+    "http_fallback_local_port": int(os.environ.get("HTTP_FALLBACK_LOCAL_PORT_VALUE", "10445")),
     "smoke_profile": {
         "enabled": parse_bool(os.environ.get("XRAY_CORE_SMOKE_ENABLE_VALUE")),
         "port": int(os.environ["XRAY_CORE_SMOKE_PORT_VALUE"]) if os.environ.get("XRAY_CORE_SMOKE_PORT_VALUE") else None,
