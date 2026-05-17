@@ -7,6 +7,7 @@ import time
 import re
 import shutil
 import subprocess
+import ipaddress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -121,6 +122,7 @@ def _load_bans(now: float) -> list[dict]:
         payload = {}
     items = payload.get("bans") if isinstance(payload, dict) else []
     out: list[dict] = []
+    local_ips = _local_machine_ips()
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict):
             continue
@@ -130,7 +132,7 @@ def _load_bans(now: float) -> list[dict]:
         except Exception:
             continue
         ip = str(item.get("ip") or "").strip()
-        if not ip or _is_loopback_ip(ip) or port <= 0 or port > 65535 or expires_at <= now:
+        if not ip or _is_local_machine_ip(ip, local_ips) or port <= 0 or port > 65535 or expires_at <= now:
             continue
         out.append(item)
     return out
@@ -203,6 +205,69 @@ def _parse_ss_endpoint(value: str) -> tuple[str, int] | None:
     return host, port
 
 
+def _normalize_ip(ip: str) -> str:
+    text = str(ip or "").strip().strip("[]")
+    if not text:
+        return ""
+    if "/" in text:
+        text = text.split("/", 1)[0]
+    if text.startswith("::ffff:"):
+        text = text[len("::ffff:") :]
+    try:
+        return str(ipaddress.ip_address(text))
+    except Exception:
+        return text.lower()
+
+
+def _configured_local_ips() -> set[str]:
+    raw = str(os.environ.get("XRAY_CONN_GUARD_LOCAL_IPS") or "").strip()
+    if not raw:
+        return set()
+    return {
+        normalized
+        for normalized in (_normalize_ip(part) for part in re.split(r"[\s,;]+", raw))
+        if normalized
+    }
+
+
+def _local_machine_ips() -> set[str]:
+    ips = set(_configured_local_ips())
+
+    if _cmd_exists("hostname"):
+        result = _run(["hostname", "-I"])
+        if result.returncode == 0:
+            for part in str(result.stdout or "").split():
+                normalized = _normalize_ip(part)
+                if normalized:
+                    ips.add(normalized)
+
+    if _cmd_exists("ip"):
+        result = _run(["ip", "-o", "addr", "show"])
+        if result.returncode == 0:
+            for part in str(result.stdout or "").split():
+                normalized = _normalize_ip(part)
+                try:
+                    ipaddress.ip_address(normalized)
+                except Exception:
+                    continue
+                ips.add(normalized)
+
+    return ips
+
+
+def _is_local_machine_ip(ip: str, local_ips: set[str] | None = None) -> bool:
+    normalized = _normalize_ip(ip)
+    if not normalized:
+        return False
+    if _is_loopback_ip(normalized):
+        return True
+    configured_ips = _configured_local_ips()
+    if normalized in configured_ips:
+        return True
+    known_local_ips = local_ips if local_ips is not None else _local_machine_ips()
+    return normalized in known_local_ips
+
+
 def _is_ipv6(ip: str) -> bool:
     return ":" in str(ip or "") and bool(_IPV6_RE.match(str(ip or "")))
 
@@ -224,6 +289,7 @@ def _scan_abusive_ips(ports: list[int]) -> tuple[list[dict], list[dict], int, bo
     port_total_counts: dict[int, int] = {}
     port_bad_counts: dict[int, int] = {}
     port_state_counts: dict[int, dict[str, int]] = {}
+    local_ips = _local_machine_ips()
     rows_seen = 0
     limited = False
     proc = subprocess.Popen(
@@ -256,7 +322,7 @@ def _scan_abusive_ips(ports: list[int]) -> tuple[list[dict], list[dict], int, bo
                 continue
             if peer_port > 0 and peer_port < 1024:
                 continue
-            if _is_loopback_ip(peer_ip):
+            if _is_local_machine_ip(peer_ip, local_ips):
                 continue
             key = (peer_ip, local_port)
             total_counts[key] = total_counts.get(key, 0) + 1
@@ -483,7 +549,7 @@ def _add_ban_rule(tool: str, item: dict) -> bool:
         port = 0
     if not ip or port <= 0 or port > 65535:
         return False
-    if _is_loopback_ip(ip):
+    if _is_local_machine_ip(ip):
         return False
     if tool == "iptables" and _is_ipv6(ip):
         return False
@@ -608,7 +674,7 @@ def _refresh_dynamic_bans(ports: list[int]) -> list[dict]:
     extended_count = 0
     for offender in offenders:
         ip = str(offender.get("ip") or "")
-        if _is_loopback_ip(ip):
+        if _is_local_machine_ip(ip):
             continue
         port = int(offender.get("port") or 0)
         key = (ip, port)
