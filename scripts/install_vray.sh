@@ -3226,14 +3226,16 @@ payload = {
             "PANEL_DOMAIN": str(os.environ.get("PANEL_DOMAIN_VALUE", "")).strip(),
         },
         "install_mtproxy": {
-            "MTPROXY_TLS_DOMAIN": str(os.environ.get("MT_DOMAIN_VALUE", "")).strip(),
+            "MTPROXY_PUBLIC_HOST": str(os.environ.get("MT_DOMAIN_VALUE", "")).strip(),
+            "MTPROXY_TLS_DOMAIN": "<external-real-domain-not-this-server>",
         },
     },
     "rules": [
         "panel_domain is for 3x-ui panel and bot api_url",
         "app_domain is the user-facing VLESS/shared HTTP domain",
-        "mt_suggested_domain is the recommended exact hostname for MTProxy ee",
-        "do not reuse the exact same hostname for panel and MTProxy ee on one shared external port",
+        "mt_suggested_domain is the recommended public hostname for MTProxy links",
+        "MTPROXY_PUBLIC_HOST must resolve to this server; MTPROXY_TLS_DOMAIN for ee must resolve away from this server",
+        "do not reuse the exact same SNI hostname for two different backends on one shared external port",
         "for bot runtime, prefer api_host_suggested as api_host when you want panel API to avoid domain/SNI conflicts",
     ],
 }
@@ -3924,8 +3926,9 @@ show_summary() {
     info "Rollout block"
     echo "  Domain for panel: ${panel_host:-<set PANEL_DOMAIN>}"
     echo "  Domain for users: ${public_dns_name:-<set APP_DOMAIN/PUBLIC_DOMAIN>}"
-    echo "  Recommended domain for MTProxy: ${mt_suggested_domain}"
-    echo "  Active MTProxy domain: ${effective_mt_domain}"
+    echo "  Recommended public host for MTProxy links: ${mt_suggested_domain}"
+    echo "  Active MTProxy public host: ${effective_mt_domain}"
+    echo "  Fake TLS domain for MTProxy ee: set a real external domain, not this node"
     echo "  Panel/API url for bot: ${panel_api_url}"
     echo "  Recommended api_host override: ${server_public_ip:-<public-ip>}"
     echo ""
@@ -3933,7 +3936,8 @@ show_summary() {
     echo "  Use these values for the next rollout step:"
     printf 'APP_DOMAIN=%q\n' "${public_dns_name:-}"
     printf 'PANEL_DOMAIN=%q\n' "${panel_host:-}"
-    printf 'MTPROXY_TLS_DOMAIN=%q\n' "${effective_mt_domain:-}"
+    printf 'MTPROXY_PUBLIC_HOST=%q\n' "${effective_mt_domain:-}"
+    printf 'MTPROXY_TLS_DOMAIN=%q\n' "<external-real-domain-not-this-server>"
     echo ""
     info "3x-ui panel backend"
     echo "  Backend port: ${XUI_PANEL_PORT}"
@@ -4061,8 +4065,9 @@ payload = {
     "rules": [
         "panel_domain is for 3x-ui panel and api_url used by the bot/admin API",
         "app_domain is the user-facing VLESS/shared HTTP hostname",
-        "mt_suggested_domain should be used for MTProxy ee on shared external 443",
-        "do not reuse the exact same hostname for panel and MTProxy ee on one shared 443",
+        "mt_suggested_domain should be used as MTPROXY_PUBLIC_HOST for MTProxy links",
+        "MTPROXY_TLS_DOMAIN for ee must be a real external fake TLS domain that does not resolve to this node",
+        "do not reuse the exact same SNI hostname for two different backends on one shared 443",
     ],
 }
 print(json.dumps(payload, ensure_ascii=False, indent=2))
