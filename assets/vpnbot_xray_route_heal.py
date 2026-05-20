@@ -18,6 +18,7 @@ TRUTHY = {"1", "true", "yes", "on"}
 FALSY = {"0", "false", "no", "off"}
 MANAGED_TAGS = {
     "vpnbot-allow-ru-egress-domains",
+    "vpnbot-block-torrent-peer-discovery-domains",
     "vpnbot-block-ru-domains",
     "vpnbot-block-ru-ips",
 }
@@ -77,7 +78,7 @@ def download_file(url: str, target: Path, *, timeout: int = 20) -> bool:
         tmp.unlink(missing_ok=True)
 
 
-def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str]]:
+def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str], list[str]]:
     default_domains = [
         "regexp:\\.ru$",
         "regexp:\\.su$",
@@ -89,6 +90,35 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
         "domain:vk.com",
     ]
     default_ips = ["geoip:ru"]
+    default_torrent_domains = [
+        "domain:tracker.opentrackr.org",
+        "domain:tracker.openbittorrent.com",
+        "domain:tracker.publicbt.com",
+        "domain:tracker.internetwarriors.net",
+        "domain:tracker.yoshi210.com",
+        "domain:tracker.skyts.net",
+        "domain:tracker.tiny-vps.com",
+        "domain:tracker.coppersurfer.tk",
+        "domain:tracker.leechers-paradise.org",
+        "domain:tracker.torrent.eu.org",
+        "domain:tracker.btzoo.eu",
+        "domain:open.demonii.com",
+        "domain:open.acgtracker.com",
+        "domain:opensharing.org",
+        "domain:announce.torrentsmd.com",
+        "domain:bt.careland.com.cn",
+        "domain:i.bandito.org",
+        "domain:bttrack.9you.com",
+        "domain:p4p.arenabg.com",
+        "domain:explodie.org",
+        "domain:9.rarbg.com",
+        "domain:9.rarbg.me",
+        "domain:9.rarbg.to",
+        "domain:11.rarbg.com",
+        "domain:router.bittorrent.com",
+        "domain:router.utorrent.com",
+        "domain:dht.transmissionbt.com",
+    ]
 
     external_enabled = env_bool("VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE", default=True)
     external_file = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_FILE", "")).strip()
@@ -98,6 +128,7 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
 
     domains = default_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS", ""))
     ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS", ""))
+    torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS", ""))
     allow_domains = split_list(
         os.environ.get(
             "VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS",
@@ -111,7 +142,7 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
             "domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com",
         )
     )
-    return domains, ips, allow_domains
+    return domains, ips, allow_domains, torrent_domains
 
 
 def load_routing(path: Path) -> dict[str, Any]:
@@ -135,16 +166,17 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
     before = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     routing = payload["routing"]
     rules = routing["rules"]
-    domains, ips, allow_domains = build_default_rules(share_dir)
+    domains, ips, allow_domains, torrent_domains = build_default_rules(share_dir)
     enabled = env_bool("VPNBOT_XRAY_BLOCK_RU_EGRESS", default=True)
+    torrent_enabled = env_bool("VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY", default=True)
 
-    if enabled:
+    if enabled or torrent_enabled:
         strategy = str(routing.get("domainStrategy") or "").strip()
         if strategy not in {"IPIfNonMatch", "IPOnDemand"}:
             routing["domainStrategy"] = "IPIfNonMatch"
 
         managed: list[tuple[str, str, list[str], dict[str, Any]]] = []
-        if allow_domains:
+        if enabled and allow_domains:
             managed.append(
                 (
                     "vpnbot-allow-ru-egress-domains",
@@ -158,32 +190,72 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
                     },
                 )
             )
-        managed.extend(
-            [
+        if torrent_enabled and torrent_domains:
+            managed.append(
                 (
-                    "vpnbot-block-ru-domains",
+                    "vpnbot-block-torrent-peer-discovery-domains",
                     "domain",
-                    domains,
+                    torrent_domains,
                     {
                         "type": "field",
-                        "domain": domains,
+                        "domain": torrent_domains,
                         "outboundTag": "block",
-                        "ruleTag": "vpnbot-block-ru-domains",
+                        "ruleTag": "vpnbot-block-torrent-peer-discovery-domains",
                     },
-                ),
-                (
-                    "vpnbot-block-ru-ips",
-                    "ip",
-                    ips,
-                    {
-                        "type": "field",
-                        "ip": ips,
-                        "outboundTag": "block",
-                        "ruleTag": "vpnbot-block-ru-ips",
-                    },
-                ),
+                )
+            )
+        if enabled:
+            managed.extend(
+                [
+                    (
+                        "vpnbot-block-ru-domains",
+                        "domain",
+                        domains,
+                        {
+                            "type": "field",
+                            "domain": domains,
+                            "outboundTag": "block",
+                            "ruleTag": "vpnbot-block-ru-domains",
+                        },
+                    ),
+                    (
+                        "vpnbot-block-ru-ips",
+                        "ip",
+                        ips,
+                        {
+                            "type": "field",
+                            "ip": ips,
+                            "outboundTag": "block",
+                            "ruleTag": "vpnbot-block-ru-ips",
+                        },
+                    ),
+                ]
+            )
+        else:
+            rules[:] = [
+                rule
+                for rule in rules
+                if not (
+                    isinstance(rule, dict)
+                    and (
+                        rule.get("ruleTag") in {"vpnbot-allow-ru-egress-domains", "vpnbot-block-ru-domains", "vpnbot-block-ru-ips"}
+                        or exact_legacy_rule(rule, "domain", domains)
+                        or exact_legacy_rule(rule, "ip", ips)
+                    )
+                )
             ]
-        )
+        if not torrent_enabled:
+            rules[:] = [
+                rule
+                for rule in rules
+                if not (
+                    isinstance(rule, dict)
+                    and (
+                        rule.get("ruleTag") == "vpnbot-block-torrent-peer-discovery-domains"
+                        or exact_legacy_rule(rule, "domain", torrent_domains)
+                    )
+                )
+            ]
         for tag, key, values, rule in reversed(managed):
             tagged_index = next(
                 (idx for idx, existing in enumerate(rules) if isinstance(existing, dict) and existing.get("ruleTag") == tag),
@@ -216,6 +288,7 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
                 and (
                     rule.get("ruleTag") in MANAGED_TAGS
                     or exact_legacy_rule(rule, "domain", domains)
+                    or exact_legacy_rule(rule, "domain", torrent_domains)
                     or exact_legacy_rule(rule, "ip", ips)
                 )
             )
@@ -224,9 +297,11 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
     after = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     summary = {
         "enabled": enabled,
+        "torrent_enabled": torrent_enabled,
         "allow_domains": allow_domains,
         "domains": domains,
         "ips": ips,
+        "torrent_domains": torrent_domains,
         "domainStrategy": routing.get("domainStrategy"),
     }
     return payload, summary, before != after
