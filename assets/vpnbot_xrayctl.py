@@ -23,6 +23,7 @@ DEFAULT_XRAY_ASSET_DIR = "/opt/vpnbot/xray-core/share"
 DEFAULT_API_SERVER = "127.0.0.1:10085"
 DEFAULT_XRAY_SERVICE_NAME = "vpnbot-xray.service"
 DEFAULT_HANDLER_MISMATCH_RESTART_COOLDOWN_SECONDS = 900
+DEFAULT_RUNTIME_REMOVE_ZERO_RESTART_COOLDOWN_SECONDS = 900
 DEFAULT_RESTART_STATE_FILE = "/var/lib/vpnbot-xrayctl/restart_state.json"
 
 
@@ -187,7 +188,7 @@ def _client_email(user_id: int, inbound: dict[str, Any]) -> str:
 
 
 def _client_flow(inbound: dict[str, Any]) -> str:
-    marker_text = f"{inbound.get('remark') or ''} {inbound.get('tag') or ''}".lower()
+    marker_text = "{} {}".format(inbound.get("remark") or "", inbound.get("tag") or "").lower()
     if "no flow" in marker_text or "noflow" in marker_text or "no-flow" in marker_text:
         return ""
     stream = inbound.get("streamSettings") or {}
@@ -368,6 +369,37 @@ def _maybe_restart_xray_service_for_handler_mismatch(ns: argparse.Namespace) -> 
 
     _restart_xray_service(ns)
     state[service_name] = now
+    _save_restart_state(state_path, state)
+
+
+def _maybe_restart_xray_service_for_runtime_remove_zero(ns: argparse.Namespace) -> None:
+    state_path = _restart_state_path(ns)
+    state = _load_restart_state(state_path)
+    service_name = str(ns.xray_service_name)
+    state_key = f"{service_name}:runtime-remove-zero"
+    cooldown = max(
+        60,
+        int(
+            getattr(
+                ns,
+                "runtime_remove_zero_restart_cooldown_seconds",
+                DEFAULT_RUNTIME_REMOVE_ZERO_RESTART_COOLDOWN_SECONDS,
+            )
+        ),
+    )
+    now = time.time()
+    last_restart_at = float(state.get(state_key) or 0.0)
+    if last_restart_at > 0.0:
+        age = max(0.0, now - last_restart_at)
+        if age < cooldown:
+            left = max(1, int(cooldown - age))
+            raise XrayCtlError(
+                f"xray runtime-remove-zero restart skipped by cooldown for service {service_name}: "
+                f"{left}s left"
+            )
+
+    _restart_xray_service(ns)
+    state[state_key] = now
     _save_restart_state(state_path, state)
 
 
@@ -609,6 +641,11 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
                 restarted_for_handler_mismatch = False
             if code != 0:
                 raise XrayCtlError(f"xray api remove user failed: exit={code} stdout={out[-500:]} stderr={err[-500:]}")
+            runtime_removed = not _api_removed_no_users(out)
+            restart_applied = False
+            if not runtime_removed:
+                _maybe_restart_xray_service_for_runtime_remove_zero(ns)
+                restart_applied = True
         except Exception:
             _atomic_write(path, original_payload)
             raise
@@ -618,6 +655,8 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
             "removed": True,
             "runtime_only": False,
             "email": target_email,
+            "runtime_removed": runtime_removed,
+            "restart_applied": restart_applied,
             "handler_mismatch_restarted": restarted_for_handler_mismatch,
         }
 
@@ -631,6 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-server", default=DEFAULT_API_SERVER)
     parser.add_argument("--xray-service-name", default=DEFAULT_XRAY_SERVICE_NAME)
     parser.add_argument("--handler-mismatch-restart-cooldown-seconds", type=int, default=DEFAULT_HANDLER_MISMATCH_RESTART_COOLDOWN_SECONDS)
+    parser.add_argument("--runtime-remove-zero-restart-cooldown-seconds", type=int, default=DEFAULT_RUNTIME_REMOVE_ZERO_RESTART_COOLDOWN_SECONDS)
     parser.add_argument("--restart-state-file", default=DEFAULT_RESTART_STATE_FILE)
     parser.add_argument("--lock-file", default="")
     subparsers = parser.add_subparsers(dest="command", required=True)
