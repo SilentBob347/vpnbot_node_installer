@@ -139,7 +139,12 @@ XRAY_CONN_GUARD_SCAN_MAX_ROWS="${XRAY_CONN_GUARD_SCAN_MAX_ROWS:-80000}"
 XRAY_CONN_GUARD_STATE_DIR="${XRAY_CONN_GUARD_STATE_DIR:-/var/lib/vpnbot-xray-conn-guard}"
 XRAY_CONN_GUARD_BAN_STATE_FILE="${XRAY_CONN_GUARD_BAN_STATE_FILE:-${XRAY_CONN_GUARD_STATE_DIR}/bans.json}"
 XRAY_CONN_GUARD_EVENTS_FILE="${XRAY_CONN_GUARD_EVENTS_FILE:-${XRAY_CONN_GUARD_STATE_DIR}/events.jsonl}"
-VPNBOT_SSH_GUARD_ENABLED="${VPNBOT_SSH_GUARD_ENABLED:-1}"
+# SSH hardening is owned by the canonical bootstrap script
+# /mnt/g/Privacy/sshsecurity.sh. Keep this installer-local SSH guard disabled
+# by default so production control-plane IPs live in one source of truth.
+# The legacy block below is only an explicit rescue fallback:
+# VPNBOT_SSH_GUARD_ENABLED=1 bash install_vray.sh
+VPNBOT_SSH_GUARD_ENABLED="${VPNBOT_SSH_GUARD_ENABLED:-0}"
 VPNBOT_SSH_KEY_ONLY_MODE="${VPNBOT_SSH_KEY_ONLY_MODE:-auto}"
 VPNBOT_SSH_GUARD_CHAIN="${VPNBOT_SSH_GUARD_CHAIN:-VPNBOT_SSH_GUARD}"
 VPNBOT_SSH_GUARD_TRUSTED_IPS="${VPNBOT_SSH_GUARD_TRUSTED_IPS:-185.170.154.155}"
@@ -4284,6 +4289,10 @@ PY
 }
 
 configure_ssh_control_plane_guard() {
+    # Deprecated compatibility path. Normal VPnBot nodes must get SSH port,
+    # authorized_keys, fail2ban and VPNBOT_SSH_GUARD from sshsecurity.sh.
+    # Do not add or update production IP allowlists here; update sshsecurity.sh
+    # and re-run it on the node instead.
     [ "${VPNBOT_SSH_GUARD_ENABLED}" = "1" ] || return 0
     command -v iptables >/dev/null 2>&1 || return 0
 
