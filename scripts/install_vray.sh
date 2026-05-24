@@ -80,6 +80,7 @@ VPNBOT_ASSET_SHARE_DIR="${VPNBOT_ASSET_SHARE_DIR:-/usr/local/share/vpnbot}"
 VPNBOT_REALITY_SNI_POOL_FILE="${VPNBOT_REALITY_SNI_POOL_FILE:-${VPNBOT_ASSET_SHARE_DIR}/reality_sni_pool.json}"
 VPNBOT_NGINX_AUTOSTART="${VPNBOT_NGINX_AUTOSTART:-1}"
 XUI_PRESET_AUTORUN="${XUI_PRESET_AUTORUN:-auto}"
+VPNBOT_XRAY_DEFAULT_REALITY_INBOUNDS="${VPNBOT_XRAY_DEFAULT_REALITY_INBOUNDS:-1}"
 XUI_DEFAULTS_LOADED=0
 NGINX_HTTP_SITE_FILE="/etc/nginx/sites-available/vpnbot_vray_http.conf"
 NGINX_HTTP_LOCATION_DIR="/etc/nginx/vpnbot-http-locations.d"
@@ -3852,6 +3853,16 @@ enable_sync() {
 run_initial_preset_flow() {
     if [[ "${XUI_PRESET_AUTORUN}" == "none" ]]; then
         return 0
+    fi
+
+    if is_xray_core_backend && env_is_true "${VPNBOT_XRAY_DEFAULT_REALITY_INBOUNDS}"; then
+        echo ""
+        info "Default standalone Xray-core REALITY inbounds"
+        echo "  Creating separate shared TCP/443 VLESS REALITY inbounds for:"
+        echo "  • www.wildberries.ru"
+        echo "  • www.ozon.ru"
+        echo "  Disable this automatic step with VPNBOT_XRAY_DEFAULT_REALITY_INBOUNDS=0."
+        VPNBOT_VLESS_BACKEND=xray-core "${VPNBOT_VLESS_PRESET_HELPER}" --apply-default-xray-reality-inbounds
     fi
 
     if [[ -t 0 && -t 1 ]]; then

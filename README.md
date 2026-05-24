@@ -60,6 +60,14 @@ dead target such as a temporarily filtered local site from being saved silently.
 If the check fails, choose another SNI from the full pool. Use
 `VPNBOT_REALITY_DEST_CHECK=0` only for a manual emergency override.
 
+For standalone Xray-core, fresh installs automatically create two separate
+shared TCP/443 VLESS REALITY inbounds with `www.wildberries.ru` and
+`www.ozon.ru` as their REALITY `dest`/SNI values. This gives a new VPnBot node
+two ready user-facing REALITY routes even when the installer runs without an
+interactive inbound menu. Set `VPNBOT_XRAY_DEFAULT_REALITY_INBOUNDS=0` before
+running the installer to skip only this automatic starter profile, or
+`XUI_PRESET_AUTORUN=none` to skip the whole initial preset flow.
+
 Standalone Xray-core installs block proxied user egress to Russian destination
 domains/IPs by default through Xray `routing` and the `blackhole` outbound. The
 installer downloads `roscomvpn-geosite.dat` from
