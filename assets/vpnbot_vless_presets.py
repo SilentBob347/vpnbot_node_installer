@@ -45,10 +45,6 @@ XRAY_TCP_REALITY_DOMAINS = [
     "www.gosuslugi.ru",
     "vk.com",
 ]
-XRAY_DEFAULT_REALITY_INBOUND_LINES = [
-    "443 vless tcp raw www.wildberries.ru",
-    "443 vless tcp raw www.ozon.ru",
-]
 XRAY_PROTOCOL_LABELS = [
     ("vless", "VLESS"),
     ("vmess", "VMESS"),
@@ -1230,13 +1226,6 @@ def list_titles(groups: list[dict]) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) > 1 and argv[1] == "--list-sni":
         return print_reality_sni_pool()
-    if len(argv) > 1 and argv[1] == "--default-xray-reality-lines-json":
-        print(json.dumps(XRAY_DEFAULT_REALITY_INBOUND_LINES, ensure_ascii=False, indent=2))
-        return 0
-    if len(argv) > 1 and argv[1] == "--apply-default-xray-reality-inbounds":
-        if BACKEND_MODE != "xray-core":
-            raise SystemExit("--apply-default-xray-reality-inbounds доступен только для standalone Xray-core")
-        return apply_lines_via_xray(list(XRAY_DEFAULT_REALITY_INBOUND_LINES))
     if len(argv) > 1 and argv[1] == "--line-from-sni":
         if len(argv) < 3:
             raise SystemExit("Usage: vpnbot-vless-presets --line-from-sni <sni> [vless|trojan] [tcp|xhttp] [direct-random|shared-random|443|8443] [--no-flow]")
