@@ -121,6 +121,7 @@ XRAY_CONN_GUARD_SERVICE_FILE="${XRAY_CONN_GUARD_SERVICE_FILE:-/etc/systemd/syste
 XRAY_CONN_GUARD_PATH_FILE="${XRAY_CONN_GUARD_PATH_FILE:-/etc/systemd/system/vpnbot-xray-conn-guard.path}"
 XRAY_CONN_GUARD_TIMER_FILE="${XRAY_CONN_GUARD_TIMER_FILE:-/etc/systemd/system/vpnbot-xray-conn-guard.timer}"
 XRAY_CONN_GUARD_ENABLED="${XRAY_CONN_GUARD_ENABLED:-1}"
+XRAY_CONN_GUARD_PATH_ENABLED="${XRAY_CONN_GUARD_PATH_ENABLED:-0}"
 XRAY_CONN_GUARD_MAX_PER_IP="${XRAY_CONN_GUARD_MAX_PER_IP:-3000}"
 XRAY_CONN_GUARD_IPV6_MAX_PER_IP="${XRAY_CONN_GUARD_IPV6_MAX_PER_IP:-3000}"
 XRAY_CONN_GUARD_BAN_ENABLED="${XRAY_CONN_GUARD_BAN_ENABLED:-1}"
@@ -2615,7 +2616,12 @@ WantedBy=timers.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now "$(basename "${XRAY_CONN_GUARD_PATH_FILE}")" >/dev/null
+    if [ "${XRAY_CONN_GUARD_PATH_ENABLED}" = "1" ]; then
+        systemctl enable --now "$(basename "${XRAY_CONN_GUARD_PATH_FILE}")" >/dev/null
+    else
+        systemctl disable --now "$(basename "${XRAY_CONN_GUARD_PATH_FILE}")" >/dev/null 2>&1 || true
+        systemctl reset-failed "$(basename "${XRAY_CONN_GUARD_PATH_FILE}")" >/dev/null 2>&1 || true
+    fi
     systemctl enable --now "$(basename "${XRAY_CONN_GUARD_TIMER_FILE}")" >/dev/null
     case "${XRAY_CONN_GUARD_ENABLED,,}" in
         1|true|yes|on) systemctl start "${XRAY_CONN_GUARD_SERVICE_NAME}" || true ;;

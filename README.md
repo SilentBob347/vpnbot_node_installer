@@ -106,6 +106,11 @@ and reboots only after 8 consecutive failed checks with at least 1 hour uptime
 and a 6 hour reboot cooldown. Diagnostic events are written to
 `/var/lib/vpnbot-node-watchdog/events.jsonl`.
 
+The Xray connection guard remains enabled through
+`vpnbot-xray-conn-guard.timer`. Its path trigger is disabled by default because
+frequent managed-inbound file updates can trip systemd start limits while the
+periodic timer already refreshes the same iptables protection.
+
 SSH lockdown is intentionally not installed by this Xray installer by default.
 The canonical SSH bootstrap is the separate `sshsecurity.sh` gist and repo file.
 If the installer-local legacy SSH guard is explicitly enabled with
