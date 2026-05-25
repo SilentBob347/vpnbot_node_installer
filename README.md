@@ -48,6 +48,12 @@ files to stay readable and testable as normal files:
   based on short activity windows, per-user Xray traffic counters, short
   traffic-delta windows, and a local runtime history file; it does not disable
   clients by itself.
+- `assets/vpnbot_node_watchdog.py` - local node health watchdog. It checks the
+  default route, TCP reachability to the production bot host and a public
+  endpoint, key services, and recent kernel network errors. It may gently
+  restart failed local services or the node network stack after repeated
+  failures, and can reboot only after a long consecutive failure window,
+  minimum uptime, and reboot cooldown.
 - `assets/vpnbot_xray_sync_routes.py` - nginx route sync helper for standalone
   Xray-core managed inbounds.
 - `assets/vpnbot_xui_sync_routes.py` - nginx route sync helper for legacy
@@ -89,6 +95,22 @@ routing block for a special node. Rerun
 `/usr/local/bin/vpnbot-xray-heal-routes` on an installed standalone node to
 refresh `roscomvpn-geosite.dat`, reapply the managed routing rules, validate
 Xray, and trigger nginx route-sync without editing JSON by hand.
+
+Standalone Xray-core installs also include `vpnbot-node-watchdog.timer`. This is
+not a traffic limiter and not a user-IP ban system. It is a node-side recovery
+helper for provider-side network failures such as lost default route, failed
+TCP connectivity, inactive local services, or kernel NIC reset messages. The
+default timer runs every 120 seconds with jitter, restarts services only after
+repeated failures, restarts the network stack after a longer repeated failure,
+and reboots only after 8 consecutive failed checks with at least 1 hour uptime
+and a 6 hour reboot cooldown. Diagnostic events are written to
+`/var/lib/vpnbot-node-watchdog/events.jsonl`.
+
+SSH lockdown is intentionally not installed by this Xray installer by default.
+The canonical SSH bootstrap is the separate `sshsecurity.sh` gist and repo file.
+If the installer-local legacy SSH guard is explicitly enabled with
+`VPNBOT_SSH_GUARD_ENABLED=1`, its defaults are soft and use TCP reset rejects
+instead of silent drops.
 
 For a side-by-side smoke test on a legacy node where another service already
 owns public HTTP/TCP ports, set `VPNBOT_NGINX_AUTOSTART=0`. Route sync will

@@ -139,6 +139,18 @@ XRAY_CONN_GUARD_SCAN_MAX_ROWS="${XRAY_CONN_GUARD_SCAN_MAX_ROWS:-80000}"
 XRAY_CONN_GUARD_STATE_DIR="${XRAY_CONN_GUARD_STATE_DIR:-/var/lib/vpnbot-xray-conn-guard}"
 XRAY_CONN_GUARD_BAN_STATE_FILE="${XRAY_CONN_GUARD_BAN_STATE_FILE:-${XRAY_CONN_GUARD_STATE_DIR}/bans.json}"
 XRAY_CONN_GUARD_EVENTS_FILE="${XRAY_CONN_GUARD_EVENTS_FILE:-${XRAY_CONN_GUARD_STATE_DIR}/events.jsonl}"
+VPNBOT_NODE_WATCHDOG_SCRIPT="${VPNBOT_NODE_WATCHDOG_SCRIPT:-/usr/local/bin/vpnbot-node-watchdog}"
+VPNBOT_NODE_WATCHDOG_SERVICE_NAME="${VPNBOT_NODE_WATCHDOG_SERVICE_NAME:-vpnbot-node-watchdog.service}"
+VPNBOT_NODE_WATCHDOG_SERVICE_FILE="${VPNBOT_NODE_WATCHDOG_SERVICE_FILE:-/etc/systemd/system/${VPNBOT_NODE_WATCHDOG_SERVICE_NAME}}"
+VPNBOT_NODE_WATCHDOG_TIMER_FILE="${VPNBOT_NODE_WATCHDOG_TIMER_FILE:-/etc/systemd/system/vpnbot-node-watchdog.timer}"
+VPNBOT_NODE_WATCHDOG_ENABLED="${VPNBOT_NODE_WATCHDOG_ENABLED:-1}"
+VPNBOT_NODE_WATCHDOG_INTERVAL_SEC="${VPNBOT_NODE_WATCHDOG_INTERVAL_SEC:-120}"
+VPNBOT_NODE_WATCHDOG_RANDOM_DELAY_SEC="${VPNBOT_NODE_WATCHDOG_RANDOM_DELAY_SEC:-20}"
+VPNBOT_NODE_WATCHDOG_NETWORK_RESTART_AFTER="${VPNBOT_NODE_WATCHDOG_NETWORK_RESTART_AFTER:-3}"
+VPNBOT_NODE_WATCHDOG_REBOOT_AFTER="${VPNBOT_NODE_WATCHDOG_REBOOT_AFTER:-8}"
+VPNBOT_NODE_WATCHDOG_REBOOT_COOLDOWN="${VPNBOT_NODE_WATCHDOG_REBOOT_COOLDOWN:-21600}"
+VPNBOT_NODE_WATCHDOG_MIN_REBOOT_UPTIME="${VPNBOT_NODE_WATCHDOG_MIN_REBOOT_UPTIME:-3600}"
+VPNBOT_NODE_WATCHDOG_PROD_HOST="${VPNBOT_NODE_WATCHDOG_PROD_HOST:-185.170.154.155}"
 # SSH hardening is owned by the canonical bootstrap script
 # /mnt/g/Privacy/sshsecurity.sh. Keep this installer-local SSH guard disabled
 # by default so production control-plane IPs live in one source of truth.
@@ -148,10 +160,10 @@ VPNBOT_SSH_GUARD_ENABLED="${VPNBOT_SSH_GUARD_ENABLED:-0}"
 VPNBOT_SSH_KEY_ONLY_MODE="${VPNBOT_SSH_KEY_ONLY_MODE:-auto}"
 VPNBOT_SSH_GUARD_CHAIN="${VPNBOT_SSH_GUARD_CHAIN:-VPNBOT_SSH_GUARD}"
 VPNBOT_SSH_GUARD_TRUSTED_IPS="${VPNBOT_SSH_GUARD_TRUSTED_IPS:-185.170.154.155}"
-VPNBOT_SSH_GUARD_PER_SRC_RATE="${VPNBOT_SSH_GUARD_PER_SRC_RATE:-6/min}"
-VPNBOT_SSH_GUARD_PER_SRC_BURST="${VPNBOT_SSH_GUARD_PER_SRC_BURST:-8}"
-VPNBOT_SSH_GUARD_GLOBAL_RATE="${VPNBOT_SSH_GUARD_GLOBAL_RATE:-40/min}"
-VPNBOT_SSH_GUARD_GLOBAL_BURST="${VPNBOT_SSH_GUARD_GLOBAL_BURST:-60}"
+VPNBOT_SSH_GUARD_PER_SRC_RATE="${VPNBOT_SSH_GUARD_PER_SRC_RATE:-120/min}"
+VPNBOT_SSH_GUARD_PER_SRC_BURST="${VPNBOT_SSH_GUARD_PER_SRC_BURST:-240}"
+VPNBOT_SSH_GUARD_GLOBAL_RATE="${VPNBOT_SSH_GUARD_GLOBAL_RATE:-3000/min}"
+VPNBOT_SSH_GUARD_GLOBAL_BURST="${VPNBOT_SSH_GUARD_GLOBAL_BURST:-6000}"
 XRAY_ONLINE_TRACKER_CANONICAL_SCRIPT="/usr/local/bin/vpnbot-xray-online-tracker"
 XRAY_ONLINE_TRACKER_LEGACY_SCRIPT="/root/vpnbot-xray-online-tracker"
 XRAY_ONLINE_TRACKER_SCRIPT="${XRAY_ONLINE_TRACKER_SCRIPT:-${XRAY_ONLINE_TRACKER_CANONICAL_SCRIPT}}"
@@ -2612,6 +2624,54 @@ EOF
     info "Connection guard max per source IP per public inbound port: IPv4=${XRAY_CONN_GUARD_MAX_PER_IP}, IPv6=${XRAY_CONN_GUARD_IPV6_MAX_PER_IP}, total_states=${XRAY_CONN_GUARD_BAN_TOTAL_STATES}, bad_states=${XRAY_CONN_GUARD_BAN_BAD_STATES}, port_total=${XRAY_CONN_GUARD_PORT_TOTAL_STATES}, port_bad=${XRAY_CONN_GUARD_PORT_BAD_STATES}"
 }
 
+write_node_watchdog_assets() {
+    download_node_installer_asset "assets/vpnbot_node_watchdog.py" "${VPNBOT_NODE_WATCHDOG_SCRIPT}" 755
+    log "Installed VPnBot node watchdog helper: ${VPNBOT_NODE_WATCHDOG_SCRIPT}"
+
+    cat > "${VPNBOT_NODE_WATCHDOG_SERVICE_FILE}" <<EOF
+[Unit]
+Description=VPnBot node health watchdog
+After=network-online.target ${XRAY_CORE_SERVICE_NAME} nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=VPNBOT_NODE_WATCHDOG_PROD_HOST=${VPNBOT_NODE_WATCHDOG_PROD_HOST}
+Environment=VPNBOT_NODE_WATCHDOG_PROD_PORT=10222
+Environment=VPNBOT_NODE_WATCHDOG_NETWORK_RESTART_AFTER=${VPNBOT_NODE_WATCHDOG_NETWORK_RESTART_AFTER}
+Environment=VPNBOT_NODE_WATCHDOG_REBOOT_AFTER=${VPNBOT_NODE_WATCHDOG_REBOOT_AFTER}
+Environment=VPNBOT_NODE_WATCHDOG_REBOOT_COOLDOWN=${VPNBOT_NODE_WATCHDOG_REBOOT_COOLDOWN}
+Environment=VPNBOT_NODE_WATCHDOG_MIN_REBOOT_UPTIME=${VPNBOT_NODE_WATCHDOG_MIN_REBOOT_UPTIME}
+Environment=VPNBOT_NODE_WATCHDOG_SERVICES=nginx,${XRAY_CORE_SERVICE_NAME},vpnbot-xray-online.service
+ExecStart=${VPNBOT_NODE_WATCHDOG_SCRIPT}
+EOF
+
+    cat > "${VPNBOT_NODE_WATCHDOG_TIMER_FILE}" <<EOF
+[Unit]
+Description=Periodic VPnBot node health watchdog
+
+[Timer]
+OnBootSec=180s
+OnUnitActiveSec=${VPNBOT_NODE_WATCHDOG_INTERVAL_SEC}s
+RandomizedDelaySec=${VPNBOT_NODE_WATCHDOG_RANDOM_DELAY_SEC}s
+Persistent=false
+Unit=${VPNBOT_NODE_WATCHDOG_SERVICE_NAME}
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    if [ "${VPNBOT_NODE_WATCHDOG_ENABLED}" = "1" ]; then
+        systemctl enable --now "$(basename "${VPNBOT_NODE_WATCHDOG_TIMER_FILE}")" >/dev/null
+        systemctl start "${VPNBOT_NODE_WATCHDOG_SERVICE_NAME}" || true
+        log "Installed node watchdog timer: ${VPNBOT_NODE_WATCHDOG_SERVICE_NAME}, interval=${VPNBOT_NODE_WATCHDOG_INTERVAL_SEC}s, reboot_after=${VPNBOT_NODE_WATCHDOG_REBOOT_AFTER}, cooldown=${VPNBOT_NODE_WATCHDOG_REBOOT_COOLDOWN}s"
+    else
+        systemctl disable --now "$(basename "${VPNBOT_NODE_WATCHDOG_TIMER_FILE}")" >/dev/null 2>&1 || true
+        log "VPNBOT_NODE_WATCHDOG_ENABLED=0: node watchdog installed but timer disabled"
+    fi
+}
+
 
 install_standalone_xray_core() {
     local archive_name tmp_dir zip_path extract_dir
@@ -4293,8 +4353,29 @@ configure_ssh_control_plane_guard() {
     # authorized_keys, fail2ban and VPNBOT_SSH_GUARD from sshsecurity.sh.
     # Do not add or update production IP allowlists here; update sshsecurity.sh
     # and re-run it on the node instead.
-    [ "${VPNBOT_SSH_GUARD_ENABLED}" = "1" ] || return 0
     command -v iptables >/dev/null 2>&1 || return 0
+
+    if [ "${VPNBOT_SSH_GUARD_ENABLED}" != "1" ]; then
+        systemctl disable --now vpnbot-ssh-guard.service >/dev/null 2>&1 || true
+        local ssh_port_disabled
+        ssh_port_disabled="$(detect_current_ssh_port)"
+        while iptables -C INPUT -p tcp --dport "${ssh_port_disabled}" -m conntrack --ctstate NEW -j "${VPNBOT_SSH_GUARD_CHAIN}" 2>/dev/null; do
+            iptables -D INPUT -p tcp --dport "${ssh_port_disabled}" -m conntrack --ctstate NEW -j "${VPNBOT_SSH_GUARD_CHAIN}" || break
+        done
+        iptables -F "${VPNBOT_SSH_GUARD_CHAIN}" 2>/dev/null || true
+        iptables -X "${VPNBOT_SSH_GUARD_CHAIN}" 2>/dev/null || true
+        if command -v ip6tables >/dev/null 2>&1; then
+            while ip6tables -C INPUT -p tcp --dport "${ssh_port_disabled}" -m conntrack --ctstate NEW -j "${VPNBOT_SSH_GUARD_CHAIN}" 2>/dev/null; do
+                ip6tables -D INPUT -p tcp --dport "${ssh_port_disabled}" -m conntrack --ctstate NEW -j "${VPNBOT_SSH_GUARD_CHAIN}" || break
+            done
+            ip6tables -F "${VPNBOT_SSH_GUARD_CHAIN}" 2>/dev/null || true
+            ip6tables -X "${VPNBOT_SSH_GUARD_CHAIN}" 2>/dev/null || true
+        fi
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            netfilter-persistent save >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
 
     local ssh_port current_client trusted_ips key_only dropin
     ssh_port="$(detect_current_ssh_port)"
@@ -4371,10 +4452,10 @@ set -euo pipefail
 CHAIN="${VPNBOT_SSH_GUARD_CHAIN:-VPNBOT_SSH_GUARD}"
 PORTS="${VPNBOT_SSH_GUARD_PORTS:-22}"
 TRUSTED_IPS="${VPNBOT_SSH_GUARD_TRUSTED_IPS:-185.170.154.155}"
-PER_SRC_RATE="${VPNBOT_SSH_GUARD_PER_SRC_RATE:-6/min}"
-PER_SRC_BURST="${VPNBOT_SSH_GUARD_PER_SRC_BURST:-8}"
-GLOBAL_RATE="${VPNBOT_SSH_GUARD_GLOBAL_RATE:-40/min}"
-GLOBAL_BURST="${VPNBOT_SSH_GUARD_GLOBAL_BURST:-60}"
+PER_SRC_RATE="${VPNBOT_SSH_GUARD_PER_SRC_RATE:-120/min}"
+PER_SRC_BURST="${VPNBOT_SSH_GUARD_PER_SRC_BURST:-240}"
+GLOBAL_RATE="${VPNBOT_SSH_GUARD_GLOBAL_RATE:-3000/min}"
+GLOBAL_BURST="${VPNBOT_SSH_GUARD_GLOBAL_BURST:-6000}"
 apply_v4() {
   command -v iptables >/dev/null 2>&1 || return 0
   iptables -N "$CHAIN" 2>/dev/null || true
@@ -4383,8 +4464,8 @@ apply_v4() {
     case "$ip" in *:*) continue ;; esac
     iptables -A "$CHAIN" -s "$ip" -j RETURN
   done
-  iptables -A "$CHAIN" -m hashlimit --hashlimit-name vpnbot_ssh_src --hashlimit-mode srcip --hashlimit-srcmask 32 --hashlimit-above "$PER_SRC_RATE" --hashlimit-burst "$PER_SRC_BURST" -j DROP
-  iptables -A "$CHAIN" -m hashlimit --hashlimit-name vpnbot_ssh_global --hashlimit-mode dstport --hashlimit-above "$GLOBAL_RATE" --hashlimit-burst "$GLOBAL_BURST" -j DROP
+  iptables -A "$CHAIN" -p tcp -m hashlimit --hashlimit-name vpnbot_ssh_src --hashlimit-mode srcip --hashlimit-srcmask 32 --hashlimit-above "$PER_SRC_RATE" --hashlimit-burst "$PER_SRC_BURST" -j REJECT --reject-with tcp-reset
+  iptables -A "$CHAIN" -p tcp -m hashlimit --hashlimit-name vpnbot_ssh_global --hashlimit-mode dstport --hashlimit-above "$GLOBAL_RATE" --hashlimit-burst "$GLOBAL_BURST" -j REJECT --reject-with tcp-reset
   iptables -A "$CHAIN" -j RETURN
   IFS=',' read -ra ports <<<"$PORTS"
   for port in "${ports[@]}"; do
@@ -4398,8 +4479,8 @@ apply_v6() {
   command -v ip6tables >/dev/null 2>&1 || return 0
   ip6tables -N "$CHAIN" 2>/dev/null || true
   ip6tables -F "$CHAIN"
-  ip6tables -A "$CHAIN" -m hashlimit --hashlimit-name vpnbot_ssh6_src --hashlimit-mode srcip --hashlimit-srcmask 64 --hashlimit-above "$PER_SRC_RATE" --hashlimit-burst "$PER_SRC_BURST" -j DROP
-  ip6tables -A "$CHAIN" -m hashlimit --hashlimit-name vpnbot_ssh6_global --hashlimit-mode dstport --hashlimit-above "$GLOBAL_RATE" --hashlimit-burst "$GLOBAL_BURST" -j DROP
+  ip6tables -A "$CHAIN" -p tcp -m hashlimit --hashlimit-name vpnbot_ssh6_src --hashlimit-mode srcip --hashlimit-srcmask 64 --hashlimit-above "$PER_SRC_RATE" --hashlimit-burst "$PER_SRC_BURST" -j REJECT --reject-with tcp-reset
+  ip6tables -A "$CHAIN" -p tcp -m hashlimit --hashlimit-name vpnbot_ssh6_global --hashlimit-mode dstport --hashlimit-above "$GLOBAL_RATE" --hashlimit-burst "$GLOBAL_BURST" -j REJECT --reject-with tcp-reset
   ip6tables -A "$CHAIN" -j RETURN
   IFS=',' read -ra ports <<<"$PORTS"
   for port in "${ports[@]}"; do
@@ -4461,6 +4542,7 @@ main() {
         write_xrayctl_assets
         write_xray_online_tracker_assets
         write_xray_conn_guard_assets
+        write_node_watchdog_assets
         ensure_nginx_layout
         ensure_bootstrap_tls_cert
         write_nginx_http_site
