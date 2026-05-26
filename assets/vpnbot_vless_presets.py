@@ -582,9 +582,11 @@ def build_xray_catalog_groups() -> list[dict]:
     tls_items = [
         {"id": "xray_vless_xhttp_tls_443", "title": f"443 VLESS XHTTP TLS {tls_domain}", "line": f"443 vless xhttp tls {tls_domain}"},
         {"id": "xray_vless_tcp_tls_443", "title": f"443 VLESS TCP TLS {tls_domain}", "line": f"443 vless tcp tls {tls_domain}"},
+        {"id": "xray_vless_grpc_tls_443", "title": f"443 VLESS gRPC TLS {tls_domain}", "line": f"443 vless grpc tls {tls_domain}"},
         {"id": "xray_vmess_tls_8443", "title": f"8443 VMESS TCP TLS {tls_domain}", "line": f"8443 vmess tcp tls {tls_domain}"},
         {"id": "xray_trojan_tcp_tls_8443", "title": f"8443 TROJAN TCP TLS {tls_domain}", "line": f"8443 trojan tcp tls {tls_domain}"},
         {"id": "xray_vless_xhttp_tls_8443", "title": f"8443 VLESS XHTTP TLS {tls_domain}", "line": f"8443 vless xhttp tls {tls_domain}"},
+        {"id": "xray_vless_grpc_tls_8443", "title": f"8443 VLESS gRPC TLS {tls_domain}", "line": f"8443 vless grpc tls {tls_domain}"},
         {"id": "xray_vless_tls_public", "title": f"случайный direct-порт VLESS TCP TLS {tls_domain}", "line": f"vless tcp tls {tls_domain} случайный direct-порт"},
         {"id": "xray_trojan_tls_public", "title": f"случайный direct-порт TROJAN TCP TLS {tls_domain}", "line": f"trojan tcp tls {tls_domain} случайный direct-порт"},
         {"id": "xray_vless_xhttp_tls_public", "title": f"случайный direct-порт VLESS XHTTP TLS {tls_domain}", "line": f"vless xhttp tls {tls_domain} случайный direct-порт"},
