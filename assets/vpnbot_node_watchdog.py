@@ -36,7 +36,16 @@ SERVICE_RESTART_ENABLED = os.environ.get("VPNBOT_NODE_WATCHDOG_SERVICE_RESTART_E
     "no",
     "off",
 }
-NETWORK_RESTART_ENABLED = os.environ.get("VPNBOT_NODE_WATCHDOG_NETWORK_RESTART_ENABLED", "1").lower() not in {
+NETWORK_RESTART_ENABLED = os.environ.get("VPNBOT_NODE_WATCHDOG_NETWORK_RESTART_ENABLED", "0").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+ALLOW_IFUPDOWN_NETWORK_RESTART = os.environ.get(
+    "VPNBOT_NODE_WATCHDOG_ALLOW_IFUPDOWN_NETWORK_RESTART",
+    "0",
+).lower() not in {
     "0",
     "false",
     "no",
@@ -162,7 +171,12 @@ def restart_services(services: list[str]) -> list[str]:
 
 def restart_network() -> list[str]:
     actions: list[str] = []
-    for service in ("systemd-networkd", "NetworkManager", "networking"):
+    services = ["systemd-networkd", "NetworkManager"]
+    if ALLOW_IFUPDOWN_NETWORK_RESTART:
+        # Restarting ifupdown's networking.service on remote DHCP nodes can
+        # release a working lease and leave the server unreachable.
+        services.append("networking")
+    for service in services:
         exists = run(["systemctl", "list-unit-files", service + ".service"], timeout=10)
         if service + ".service" not in exists.stdout:
             continue
