@@ -37,10 +37,8 @@ files to stay readable and testable as normal files:
 
 - `assets/vpnbot_xrayctl.py` - local Xray-core control helper used by the bot
   over SSH.
-- `assets/vpnbot_xui_presets.py` - preset/catalog helper for legacy 3x-ui
-  nodes.
-- `assets/vpnbot_vless_presets.py` - shared VLESS/Trojan/VMess preset helper
-  that delegates to 3x-ui or manages standalone Xray-core directly.
+- `assets/vpnbot_vless_presets.py` - VLESS/Trojan/VMess preset helper for
+  standalone Xray-core managed inbounds.
 - `assets/reality_sni_pool.json` - shared REALITY SNI pool used by both preset
   helpers.
 - `assets/vpnbot_xray_online_tracker.py` - local Xray-core online/recent
@@ -60,8 +58,6 @@ files to stay readable and testable as normal files:
   checks official stable releases, validates the current config with the new
   binary before replacing it, keeps backups, restarts `vpnbot-xray.service`, and
   rolls back automatically if the service does not return to active state.
-- `assets/vpnbot_xui_sync_routes.py` - nginx route sync helper for legacy
-  3x-ui inbounds.
 
 REALITY presets keep the full shared SNI pool available. Before writing a new
 Reality inbound, the helper checks TLS reachability of the selected
@@ -116,9 +112,9 @@ frequent managed-inbound file updates can trip systemd start limits while the
 periodic timer already refreshes the same iptables protection.
 
 Standalone Xray-core installs also include `vpnbot-xray-core-update.timer`.
-This is the binary auto-update path for `/opt/vpnbot/xray-core/bin/xray`, not a
-3x-ui updater. The timer runs once per day with a large random delay so the
-fleet does not restart at the same moment. The updater writes events to
+This is the binary auto-update path for `/opt/vpnbot/xray-core/bin/xray`. The
+timer runs once per day with a large random delay so the fleet does not restart
+at the same moment. The updater writes events to
 `/var/lib/vpnbot-xray-core-updater/events.jsonl` and keeps recent backups under
 `/var/lib/vpnbot-xray-core-updater/backups`.
 

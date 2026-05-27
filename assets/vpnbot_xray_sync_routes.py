@@ -484,7 +484,7 @@ def main() -> int:
             "  ws/grpc/http-like without tls/reality -> nginx HTTP route behind the chosen shared port\n"
             "\n"
             "Notes:\n"
-            "  - xray-core sync reads managed inbounds from JSON instead of x-ui DB\n"
+            "  - xray-core sync reads managed inbounds from JSON\n"
             "  - if no shared marker is present, sync treats inbound as direct\n"
             "  - for reality/tls on any shared port, inbound must have serverNames / serverName set\n"
             "    unless it intentionally acts as the default no-SNI backend for that shared port\n"

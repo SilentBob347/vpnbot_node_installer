@@ -3,6 +3,7 @@ import unittest
 
 
 INSTALLER = Path(__file__).resolve().parents[1] / "scripts" / "install_vray.sh"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
@@ -23,11 +24,42 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
 
     def test_xray_core_main_path_installs_updater(self):
         main_start = self.text.rindex("main() {")
-        xray_branch_start = self.text.index("if is_xray_core_backend; then", main_start)
-        legacy_branch_start = self.text.index("else", xray_branch_start)
-        xray_branch = self.text[xray_branch_start:legacy_branch_start]
+        main_body = self.text[main_start:]
 
-        self.assertIn("write_xray_core_updater_assets", xray_branch)
+        self.assertIn("install_standalone_xray_core", main_body)
+        self.assertIn("write_xray_core_updater_assets", main_body)
+        self.assertNotIn("install_3xui_noninteractive", main_body)
+
+    def test_legacy_xui_installer_code_is_removed(self):
+        forbidden_in_installer = [
+            "XUI_UPSTREAM_INSTALL_URL",
+            "VPNBOT_VLESS_BACKEND=\"${VPNBOT_VLESS_BACKEND:-3x-ui}\"",
+            "write_xui_sync_assets",
+            "write_preset_helper",
+            "vpnbot-xui-sync-routes",
+            "install_3xui_noninteractive",
+            "install_x-ui",
+            "assets/vpnbot_xui_presets.py",
+            "assets/vpnbot_xui_sync_routes.py",
+            "XRAY_SYNC_PATH=",
+            'cat > "${XRAY_SYNC_PATH}"',
+        ]
+        for needle in forbidden_in_installer:
+            self.assertNotIn(needle, self.text)
+
+        self.assertFalse((REPO_ROOT / "assets" / "vpnbot_xui_presets.py").exists())
+        self.assertFalse((REPO_ROOT / "assets" / "vpnbot_xui_sync_routes.py").exists())
+
+    def test_vless_preset_helper_is_xray_only(self):
+        helper = (REPO_ROOT / "assets" / "vpnbot_vless_presets.py").read_text(encoding="utf-8")
+        for needle in [
+            'VPNBOT_VLESS_BACKEND", "3x-ui"',
+            "LEGACY_XUI_HELPER",
+            "apply_lines_via_xui",
+            "vpnbot-xui-presets",
+            "Legacy x-ui helper",
+        ]:
+            self.assertNotIn(needle, helper)
 
 
 if __name__ == "__main__":

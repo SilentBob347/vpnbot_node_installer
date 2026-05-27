@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ===== 3x-ui / Xray installer for VPnBot =====
+# ===== Xray-core installer for VPnBot =====
 # Source of truth:
 #   https://github.com/youtubediscord/vpnbot_node_installer
 # Usage:
 #   bash <(curl -fsSL -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/youtubediscord/vpnbot_node_installer/refs/heads/main/install.sh?ts=$(date +%s)")
 #
 # Important: install.sh fetches the latest branch archive through codeload.github.com; raw fallback downloads use refs/heads/main plus cache busting.
-# Supported backend modes:
-# - 3x-ui    -> current panel-based workflow for VPnBot
-# - xray-core -> standalone official Xray-core in a dedicated folder, without x-ui
+# Supported backend mode:
+# - xray-core -> standalone official Xray-core in a dedicated folder.
 # Architecture:
 # - AWG keeps UDP/443
 # - nginx stream owns shared TCP entry ports
@@ -30,19 +29,6 @@ VPNBOT_NODE_INSTALLER_REF="${VPNBOT_NODE_INSTALLER_REF:-main}"
 VPNBOT_NODE_INSTALLER_REPO="${VPNBOT_NODE_INSTALLER_REPO:-youtubediscord/vpnbot_node_installer}"
 VPNBOT_NODE_INSTALLER_BASE_URL="${VPNBOT_NODE_INSTALLER_BASE_URL:-https://raw.githubusercontent.com/${VPNBOT_NODE_INSTALLER_REPO}/refs/heads/${VPNBOT_NODE_INSTALLER_REF}}"
 
-XUI_UPSTREAM_INSTALL_URL="${XUI_UPSTREAM_INSTALL_URL:-https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh}"
-XUI_MAIN_FOLDER="${XUI_MAIN_FOLDER:-/usr/local/x-ui}"
-XUI_BIN_CONFIG="${XUI_BIN_CONFIG:-${XUI_MAIN_FOLDER}/bin/config.json}"
-XUI_DB_PATH="${XUI_DB_PATH:-/etc/x-ui/x-ui.db}"
-XUI_PANEL_PORT="${XUI_PANEL_PORT:-2053}"
-XUI_PANEL_WEBBASEPATH="${XUI_PANEL_WEBBASEPATH:-}"
-XUI_PANEL_USERNAME="${XUI_PANEL_USERNAME:-}"
-XUI_PANEL_PASSWORD="${XUI_PANEL_PASSWORD:-}"
-XUI_XRAY_LOG_DIR="${XUI_XRAY_LOG_DIR:-/var/log/xray}"
-XUI_XRAY_ACCESS_LOG="${XUI_XRAY_ACCESS_LOG:-${XUI_XRAY_LOG_DIR}/access.log}"
-XUI_XRAY_ERROR_LOG="${XUI_XRAY_ERROR_LOG:-${XUI_XRAY_LOG_DIR}/error.log}"
-XUI_XRAY_LOGLEVEL="${XUI_XRAY_LOGLEVEL:-warning}"
-XUI_XRAY_DNS_LOG="${XUI_XRAY_DNS_LOG:-false}"
 XRAY_LOGROTATE_FILE="${XRAY_LOGROTATE_FILE:-/etc/logrotate.d/vpnbot-xray}"
 XRAY_LOGROTATE_DAYS="${XRAY_LOGROTATE_DAYS:-7}"
 XRAY_LOGROTATE_MAXSIZE="${XRAY_LOGROTATE_MAXSIZE:-100M}"
@@ -70,17 +56,14 @@ NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-}"
 NGINX_PANEL_LOCATION="${NGINX_PANEL_LOCATION:-}"
 NGINX_SSL_CERT="${NGINX_SSL_CERT:-/etc/nginx/ssl/vpnbot/fullchain.pem}"
 NGINX_SSL_KEY="${NGINX_SSL_KEY:-/etc/nginx/ssl/vpnbot/privkey.pem}"
-XUI_INSTALLER_STATE_FILE="${XUI_INSTALLER_STATE_FILE:-/etc/vpnbot-xui-installer-state.json}"
-XUI_ROLLOUT_BUNDLE_FILE="${XUI_ROLLOUT_BUNDLE_FILE:-/etc/vpnbot-xui-rollout-bundle.json}"
-XUI_INSTALLER_DEFAULTS_FILE="${XUI_INSTALLER_DEFAULTS_FILE:-/etc/vpnbot-xui-defaults.env}"
-XUI_PRESET_HELPER="${XUI_PRESET_HELPER:-/usr/local/bin/vpnbot-xui-presets}"
+VPNBOT_INSTALLER_DEFAULTS_FILE="${VPNBOT_INSTALLER_DEFAULTS_FILE:-/etc/vpnbot-xray-defaults.env}"
 VPNBOT_VLESS_PRESET_HELPER="${VPNBOT_VLESS_PRESET_HELPER:-/usr/local/bin/vpnbot-vless-presets}"
 VPNBOT_ASSET_LIB_DIR="${VPNBOT_ASSET_LIB_DIR:-/usr/local/lib/vpnbot}"
 VPNBOT_ASSET_SHARE_DIR="${VPNBOT_ASSET_SHARE_DIR:-/usr/local/share/vpnbot}"
 VPNBOT_REALITY_SNI_POOL_FILE="${VPNBOT_REALITY_SNI_POOL_FILE:-${VPNBOT_ASSET_SHARE_DIR}/reality_sni_pool.json}"
 VPNBOT_NGINX_AUTOSTART="${VPNBOT_NGINX_AUTOSTART:-1}"
-XUI_PRESET_AUTORUN="${XUI_PRESET_AUTORUN:-auto}"
-XUI_DEFAULTS_LOADED=0
+VPNBOT_PRESET_AUTORUN="${VPNBOT_PRESET_AUTORUN:-auto}"
+VPNBOT_DEFAULTS_LOADED=0
 NGINX_HTTP_SITE_FILE="/etc/nginx/sites-available/vpnbot_vray_http.conf"
 NGINX_HTTP_LOCATION_DIR="/etc/nginx/vpnbot-http-locations.d"
 NGINX_STREAM_ROOT_FILE="/etc/nginx/vpnbot-stream-root.conf"
@@ -90,18 +73,7 @@ NGINX_STREAM_SERVER_FILE="${NGINX_STREAM_INCLUDE_DIR}/vpnbot_stream_server.conf"
 NGINX_WS_HELPER="/usr/local/bin/vpnbot-nginx-add-ws-route"
 NGINX_GRPC_HELPER="/usr/local/bin/vpnbot-nginx-add-grpc-route"
 NGINX_ROUTE_LIST_HELPER="/usr/local/bin/vpnbot-nginx-list-routes"
-XUI_SYNC_SCRIPT="/usr/local/bin/vpnbot-xui-sync-routes"
-XUI_SYNC_SERVICE="/etc/systemd/system/vpnbot-xui-sync-routes.service"
-XUI_SYNC_PATH="/etc/systemd/system/vpnbot-xui-sync-routes.path"
-XUI_SYNC_TIMER="/etc/systemd/system/vpnbot-xui-sync-routes.timer"
-XUI_SYNC_STATE_DIR="/var/lib/vpnbot-xui-sync"
-XUI_UPSTREAM_TMP="/tmp/install_3xui_upstream.sh"
-XUI_SOURCED_TMP="/tmp/install_3xui_upstream_sourced.sh"
-VPNBOT_VLESS_BACKEND_EXPLICIT=0
-if [[ -n "${VPNBOT_VLESS_BACKEND:-}" ]]; then
-    VPNBOT_VLESS_BACKEND_EXPLICIT=1
-fi
-VPNBOT_VLESS_BACKEND="${VPNBOT_VLESS_BACKEND:-3x-ui}"
+VPNBOT_VLESS_BACKEND="xray-core"
 XRAY_CORE_ROOT="${XRAY_CORE_ROOT:-/opt/vpnbot/xray-core}"
 XRAY_CORE_BIN="${XRAY_CORE_BIN:-${XRAY_CORE_ROOT}/bin/xray}"
 XRAY_CORE_CONFIG_DIR="${XRAY_CORE_CONFIG_DIR:-${XRAY_CORE_ROOT}/config}"
@@ -212,10 +184,8 @@ XRAY_SOCKET_OVERLOAD_EVENTS_FILE="${XRAY_SOCKET_OVERLOAD_EVENTS_FILE:-/var/lib/v
 XRAY_SYNC_SCRIPT="${XRAY_SYNC_SCRIPT:-/usr/local/bin/vpnbot-xray-sync-routes}"
 XRAY_ROUTE_HEAL_SCRIPT="${XRAY_ROUTE_HEAL_SCRIPT:-/usr/local/bin/vpnbot-xray-heal-routes}"
 XRAY_SYNC_SERVICE="${XRAY_SYNC_SERVICE:-/etc/systemd/system/vpnbot-xray-sync-routes.service}"
-XRAY_SYNC_PATH="${XRAY_SYNC_PATH:-/etc/systemd/system/vpnbot-xray-sync-routes.path}"
 XRAY_SYNC_TIMER="${XRAY_SYNC_TIMER:-/etc/systemd/system/vpnbot-xray-sync-routes.timer}"
 XRAY_SYNC_STATE_DIR="${XRAY_SYNC_STATE_DIR:-/var/lib/vpnbot-xray-sync}"
-XRAY_SYNC_PATH_ENABLED="${XRAY_SYNC_PATH_ENABLED:-0}"
 XRAY_CORE_RELEASE_CHANNEL="${XRAY_CORE_RELEASE_CHANNEL:-stable}"
 XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-latest}"
 XRAY_CORE_RELEASES_API_URL="${XRAY_CORE_RELEASES_API_URL:-https://api.github.com/repos/XTLS/Xray-core/releases}"
@@ -330,25 +300,17 @@ normalize_vpnbot_server_id() {
 
 normalize_vless_backend_mode() {
     local raw normalized
-    raw="${VPNBOT_VLESS_BACKEND:-3x-ui}"
+    raw="${VPNBOT_VLESS_BACKEND:-xray-core}"
     normalized="$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]')"
     case "${normalized}" in
-        3x-ui|3xui|x-ui|xui)
-            VPNBOT_VLESS_BACKEND="3x-ui"
-            ;;
         xray-core|xraycore|pure-xray|pure_xray|core)
             VPNBOT_VLESS_BACKEND="xray-core"
             ;;
         *)
-            err "Unsupported VPNBOT_VLESS_BACKEND=${raw}. Supported values: 3x-ui, xray-core"
+            err "Unsupported VPNBOT_VLESS_BACKEND=${raw}. Supported value: xray-core"
             exit 1
             ;;
     esac
-}
-
-
-is_3xui_backend() {
-    [[ "${VPNBOT_VLESS_BACKEND}" == "3x-ui" ]]
 }
 
 
@@ -472,23 +434,23 @@ get_default_ddns_host_label() {
 
 
 load_installer_defaults() {
-    if [[ -f "${XUI_INSTALLER_DEFAULTS_FILE}" ]]; then
+    if [[ -f "${VPNBOT_INSTALLER_DEFAULTS_FILE}" ]]; then
         # shellcheck disable=SC1090
-        source "${XUI_INSTALLER_DEFAULTS_FILE}"
-        XUI_DEFAULTS_LOADED=1
+        source "${VPNBOT_INSTALLER_DEFAULTS_FILE}"
+        VPNBOT_DEFAULTS_LOADED=1
     fi
 }
 
 
 save_installer_defaults() {
     umask 077
-    cat > "${XUI_INSTALLER_DEFAULTS_FILE}" <<EOF
+    cat > "${VPNBOT_INSTALLER_DEFAULTS_FILE}" <<EOF
 DDNS_PROVIDER=${DDNS_PROVIDER@Q}
 DDNS_ZONE=${DDNS_ZONE@Q}
 DDNS_TOKEN=${DDNS_TOKEN@Q}
 DDNS_LABEL_SUFFIX=${DDNS_LABEL_SUFFIX@Q}
 EOF
-    chmod 600 "${XUI_INSTALLER_DEFAULTS_FILE}"
+    chmod 600 "${VPNBOT_INSTALLER_DEFAULTS_FILE}"
 }
 
 
@@ -598,40 +560,8 @@ prompt_domain_setup_mode() {
 
 
 prompt_vless_backend_mode_if_needed() {
-    local answer=""
-
-    if [[ "${VPNBOT_VLESS_BACKEND_EXPLICIT}" == "1" ]]; then
-        normalize_vless_backend_mode
-        info "VLESS backend mode from env: ${VPNBOT_VLESS_BACKEND}"
-        return 0
-    fi
-
-    if ! is_interactive_terminal; then
-        normalize_vless_backend_mode
-        info "VLESS backend mode: ${VPNBOT_VLESS_BACKEND} (non-interactive default; set VPNBOT_VLESS_BACKEND=xray-core to override)"
-        return 0
-    fi
-
-    while true; do
-        printf '%s\n' "VLESS backend mode:" >&2
-        printf '%s\n' "  1) Standalone Xray-core (recommended for new servers)" >&2
-        printf '%s\n' "  2) 3x-ui panel (legacy/current bot production mode)" >&2
-        read -r -p "Choose [1/2, default 1]: " answer
-        answer="${answer:-1}"
-        case "${answer}" in
-            1)
-                VPNBOT_VLESS_BACKEND="xray-core"
-                info "Selected VLESS backend mode: ${VPNBOT_VLESS_BACKEND}"
-                return 0
-                ;;
-            2)
-                VPNBOT_VLESS_BACKEND="3x-ui"
-                info "Selected VLESS backend mode: ${VPNBOT_VLESS_BACKEND}"
-                return 0
-                ;;
-        esac
-        printf '%s\n' "[!] Please choose 1 or 2." >&2
-    done
+    normalize_vless_backend_mode
+    info "VLESS backend mode: ${VPNBOT_VLESS_BACKEND}"
 }
 
 
@@ -760,8 +690,8 @@ collect_interactive_defaults() {
         return 0
     fi
 
-    if [[ ${XUI_DEFAULTS_LOADED} -eq 1 && ( -n "${DDNS_ZONE}" || -n "${DDNS_TOKEN}" || -n "${DDNS_PROVIDER}" ) ]]; then
-        info "Found saved Dynv6 defaults in ${XUI_INSTALLER_DEFAULTS_FILE}."
+    if [[ ${VPNBOT_DEFAULTS_LOADED} -eq 1 && ( -n "${DDNS_ZONE}" || -n "${DDNS_TOKEN}" || -n "${DDNS_PROVIDER}" ) ]]; then
+        info "Found saved Dynv6 defaults in ${VPNBOT_INSTALLER_DEFAULTS_FILE}."
         if ! prompt_yes_no "Use saved Dynv6 settings for this run?" "y"; then
             clear_dynv6_runtime_values
         fi
@@ -802,7 +732,7 @@ collect_interactive_defaults() {
             normalize_vpnbot_server_id
         fi
         save_installer_defaults
-        log "Saved shared Dynv6 defaults to ${XUI_INSTALLER_DEFAULTS_FILE}"
+        log "Saved shared Dynv6 defaults to ${VPNBOT_INSTALLER_DEFAULTS_FILE}"
         prompt_domain_roles_if_needed
         return 0
     fi
@@ -1009,19 +939,11 @@ prompt_domain_roles_if_needed() {
 
     if prompt_yes_no "Use this suggested domain role bundle?" "y"; then
         APP_DOMAIN="${suggested_app_domain}"
-        if is_xray_core_backend; then
-            PANEL_DOMAIN=""
-        else
-            PANEL_DOMAIN="${suggested_panel_domain}"
-        fi
+        PANEL_DOMAIN=""
         MT_DOMAIN="${suggested_mt_domain}"
     else
         APP_DOMAIN="$(trim_dot_domain "$(prompt_plain_value "App/public domain" "${APP_DOMAIN:-${suggested_app_domain}}")")"
-        if is_xray_core_backend; then
-            PANEL_DOMAIN=""
-        else
-            PANEL_DOMAIN="$(trim_dot_domain "$(prompt_plain_value "Panel domain" "${PANEL_DOMAIN:-${suggested_panel_domain}}")")"
-        fi
+        PANEL_DOMAIN=""
         MT_DOMAIN="$(trim_dot_domain "$(prompt_plain_value "MTProxy domain" "${MT_DOMAIN:-${suggested_mt_domain}}")")"
     fi
 
@@ -1030,9 +952,6 @@ prompt_domain_roles_if_needed() {
     echo ""
     info "Installer domain roles"
     echo "  App/public domain: ${APP_DOMAIN:-<unset>}"
-    if is_3xui_backend; then
-        echo "  Panel domain: ${PANEL_DOMAIN:-<unset>}"
-    fi
     echo "  MTProxy domain: ${MT_DOMAIN:-<unset>}"
 }
 
@@ -1347,18 +1266,10 @@ PY
 install_dependencies() {
     prepare_apt_networking || exit 1
     apt-get update -qq
-    if is_xray_core_backend; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            curl ca-certificates openssl tar nginx libnginx-mod-stream certbot python3 python3-certbot-nginx iptables jq
-        ensure_nginx_runtime_limits
-        log "Base packages installed for standalone Xray-core mode with nginx shared-port support"
-        return 0
-    fi
-
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-        curl ca-certificates openssl tar nginx libnginx-mod-stream certbot python3 python3-certbot-nginx iptables jq sqlite3
+        curl ca-certificates openssl tar nginx libnginx-mod-stream certbot python3 python3-certbot-nginx iptables jq
     ensure_nginx_runtime_limits
-    log "Base packages installed for 3x-ui mode"
+    log "Base packages installed for standalone Xray-core mode with nginx shared-port support"
 }
 
 
@@ -1476,34 +1387,8 @@ normalize_inputs() {
     normalize_vpnbot_server_id
     sync_domain_aliases
 
-    if is_3xui_backend; then
-        if [[ -z "${XUI_PANEL_USERNAME}" ]]; then
-            XUI_PANEL_USERNAME="admin_$(gen_random_string 6)"
-        fi
-        if [[ -z "${XUI_PANEL_PASSWORD}" ]]; then
-            XUI_PANEL_PASSWORD="$(gen_random_string 16)"
-        fi
-        if [[ -z "${XUI_PANEL_WEBBASEPATH}" ]]; then
-            XUI_PANEL_WEBBASEPATH="$(gen_random_string 18)"
-        fi
-        XUI_PANEL_WEBBASEPATH="${XUI_PANEL_WEBBASEPATH#/}"
-        XUI_PANEL_WEBBASEPATH="${XUI_PANEL_WEBBASEPATH%/}"
-
-        if [[ -z "${NGINX_PANEL_LOCATION}" ]]; then
-            NGINX_PANEL_LOCATION="/${XUI_PANEL_WEBBASEPATH}/"
-        fi
-    fi
-
     if [[ -z "${SHARED_HTTP_DOMAIN}" && -n "${APP_DOMAIN}" ]]; then
         SHARED_HTTP_DOMAIN="${APP_DOMAIN}"
-    fi
-
-    if is_3xui_backend && [[ -z "${PANEL_DOMAIN}" ]]; then
-        if [[ -n "${SHARED_HTTP_DOMAIN}" ]]; then
-            PANEL_DOMAIN="${SHARED_HTTP_DOMAIN}"
-        elif [[ -n "${APP_DOMAIN}" ]]; then
-            PANEL_DOMAIN="${APP_DOMAIN}"
-        fi
     fi
 
     local nginx_server_names=()
@@ -1525,61 +1410,6 @@ normalize_inputs() {
         else
             NGINX_SERVER_NAME="_"
         fi
-    fi
-}
-
-
-fetch_upstream_installer() {
-    local upstream_url="${XUI_UPSTREAM_INSTALL_URL}"
-    local cache_bust="${VPNBOT_NODE_INSTALLER_CACHE_BUST:-$(date +%s)}"
-    if [[ "${upstream_url}" == *"raw.githubusercontent.com"* ]]; then
-        if [[ "${upstream_url}" == *"?"* ]]; then
-            upstream_url="${upstream_url}&ts=${cache_bust}"
-        else
-            upstream_url="${upstream_url}?ts=${cache_bust}"
-        fi
-    fi
-    curl -L --max-time 30 -H "Cache-Control: no-cache" "${upstream_url}" -o "${XUI_UPSTREAM_TMP}"
-    python3 - <<'PY'
-from pathlib import Path
-
-src = Path("/tmp/install_3xui_upstream.sh").read_text(encoding="utf-8")
-marker = '\necho -e "${green}Running...${plain}"\ninstall_base\ninstall_x-ui $1\n'
-if marker not in src:
-    raise SystemExit("Failed to strip autorun section from upstream 3x-ui installer")
-Path("/tmp/install_3xui_upstream_sourced.sh").write_text(src.replace(marker, "\n", 1), encoding="utf-8")
-PY
-    log "Fetched upstream 3x-ui installer"
-}
-
-
-install_3xui_noninteractive() {
-    fetch_upstream_installer
-    # shellcheck disable=SC1090
-    source "${XUI_SOURCED_TMP}"
-
-    config_after_install() {
-        "${xui_folder}/x-ui" setting \
-            -username "${XUI_PANEL_USERNAME}" \
-            -password "${XUI_PANEL_PASSWORD}" \
-            -port "${XUI_PANEL_PORT}" \
-            -webBasePath "${XUI_PANEL_WEBBASEPATH}" >/dev/null 2>&1
-        "${xui_folder}/x-ui" migrate >/dev/null 2>&1 || true
-        log "3x-ui panel configured non-interactively"
-        info "Panel backend port: ${XUI_PANEL_PORT}"
-        info "Panel webBasePath: ${XUI_PANEL_WEBBASEPATH}"
-    }
-
-    prompt_and_setup_ssl() {
-        warn "Skipping upstream panel SSL setup: VPnBot nginx/stream layer handles TCP/443"
-        return 0
-    }
-
-    install_base
-    if [[ -n "${XUI_VERSION:-}" ]]; then
-        install_x-ui "${XUI_VERSION}"
-    else
-        install_x-ui
     fi
 }
 
@@ -2040,7 +1870,7 @@ write_xray_core_base_configs() {
   "log": {
     "access": "${XRAY_CORE_LOG_DIR}/access.log",
     "error": "${XRAY_CORE_LOG_DIR}/error.log",
-    "loglevel": "${XUI_XRAY_LOGLEVEL}",
+    "loglevel": "warning",
     "dnsLog": false
   }
 }
@@ -2121,7 +1951,7 @@ EOF
 write_xray_logrotate_config() {
     mkdir -p "$(dirname "${XRAY_LOGROTATE_FILE}")"
     cat > "${XRAY_LOGROTATE_FILE}" <<EOF
-${XRAY_CORE_LOG_DIR}/*.log ${XUI_XRAY_LOG_DIR}/*.log {
+${XRAY_CORE_LOG_DIR}/*.log {
     daily
     rotate ${XRAY_LOGROTATE_DAYS}
     maxsize ${XRAY_LOGROTATE_MAXSIZE}
@@ -2824,107 +2654,6 @@ PY
 }
 
 
-configure_xray_minimal_logging() {
-    mkdir -p "${XUI_XRAY_LOG_DIR}"
-    touch "${XUI_XRAY_ACCESS_LOG}" "${XUI_XRAY_ERROR_LOG}"
-    chmod 640 "${XUI_XRAY_ACCESS_LOG}" "${XUI_XRAY_ERROR_LOG}" 2>/dev/null || true
-
-    local resolved_config_path=""
-    local attempt=""
-    for attempt in $(seq 1 20); do
-        if [[ -f "${XUI_BIN_CONFIG}" ]]; then
-            resolved_config_path="${XUI_BIN_CONFIG}"
-            break
-        fi
-        for candidate in \
-            "/usr/local/x-ui/bin/config.json" \
-            "/etc/x-ui/config.json" \
-            "/etc/x-ui/xray/config.json"
-        do
-            if [[ -f "${candidate}" ]]; then
-                resolved_config_path="${candidate}"
-                break 2
-            fi
-        done
-        sleep 1
-    done
-
-    if [[ -z "${resolved_config_path}" ]]; then
-        err "Xray config not found after waiting: ${XUI_BIN_CONFIG}"
-        return 1
-    fi
-
-    if [[ "${resolved_config_path}" != "${XUI_BIN_CONFIG}" ]]; then
-        warn "Using detected Xray config path instead of default: ${resolved_config_path}"
-    fi
-
-    XUI_BIN_CONFIG_PATH="${resolved_config_path}" \
-    XUI_XRAY_ACCESS_LOG_PATH="${XUI_XRAY_ACCESS_LOG}" \
-    XUI_XRAY_ERROR_LOG_PATH="${XUI_XRAY_ERROR_LOG}" \
-    XUI_XRAY_LOGLEVEL_VALUE="${XUI_XRAY_LOGLEVEL}" \
-    XUI_XRAY_DNS_LOG_VALUE="${XUI_XRAY_DNS_LOG}" \
-    python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-config_path = Path(os.environ["XUI_BIN_CONFIG_PATH"])
-access_log = str(os.environ["XUI_XRAY_ACCESS_LOG_PATH"]).strip()
-error_log = str(os.environ["XUI_XRAY_ERROR_LOG_PATH"]).strip()
-loglevel = str(os.environ["XUI_XRAY_LOGLEVEL_VALUE"]).strip() or "warning"
-dns_log_raw = str(os.environ["XUI_XRAY_DNS_LOG_VALUE"]).strip().lower()
-dns_log = dns_log_raw in {"1", "true", "yes", "on"}
-
-if not config_path.exists():
-    raise SystemExit(f"Xray config not found: {config_path}")
-
-payload = json.loads(config_path.read_text(encoding="utf-8"))
-log_cfg = payload.get("log")
-if not isinstance(log_cfg, dict):
-    log_cfg = {}
-
-desired = {
-    "access": access_log,
-    "error": error_log,
-    "loglevel": loglevel,
-    "dnsLog": dns_log,
-}
-
-changed = False
-for key, value in desired.items():
-    if log_cfg.get(key) != value:
-        log_cfg[key] = value
-        changed = True
-
-payload["log"] = log_cfg
-
-if changed:
-    config_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-PY
-
-    systemctl restart x-ui
-    log "Configured minimal Xray logging for client IP tracking"
-    info "Xray access log: ${XUI_XRAY_ACCESS_LOG}"
-    info "Xray error log: ${XUI_XRAY_ERROR_LOG}"
-    info "Xray loglevel: ${XUI_XRAY_LOGLEVEL}; dnsLog=${XUI_XRAY_DNS_LOG}"
-}
-
-
-panel_direct_access_local_only() {
-    iptables -C INPUT -p tcp --dport "${XUI_PANEL_PORT}" -s 127.0.0.1 -j ACCEPT 2>/dev/null \
-        || iptables -I INPUT -p tcp --dport "${XUI_PANEL_PORT}" -s 127.0.0.1 -j ACCEPT
-    iptables -C INPUT -p tcp --dport "${XUI_PANEL_PORT}" -j DROP 2>/dev/null \
-        || iptables -A INPUT -p tcp --dport "${XUI_PANEL_PORT}" -j DROP
-    if command -v netfilter-persistent >/dev/null 2>&1; then
-        netfilter-persistent save 2>/dev/null || true
-    fi
-    log "Direct external access to panel port ${XUI_PANEL_PORT} blocked; localhost is allowed"
-}
-
-
 ensure_nginx_layout() {
     local stream_root_file="${NGINX_STREAM_ROOT_FILE}"
     local legacy_stream_root_file="/etc/nginx/stream_vpnbot_mux.conf"
@@ -3117,8 +2846,6 @@ if certbot certonly --nginx "${certbot_args[@]}" -m "${retry_email}" --agree-tos
     systemctl reload nginx || systemctl restart nginx
     if [[ -x /usr/local/bin/vpnbot-xray-sync-routes ]]; then
         /usr/local/bin/vpnbot-xray-sync-routes || true
-    elif [[ -x /usr/local/bin/vpnbot-xui-sync-routes ]]; then
-        /usr/local/bin/vpnbot-xui-sync-routes || true
     fi
     systemctl disable --now vpnbot-certbot-retry.timer >/dev/null 2>&1 || true
 fi
@@ -3212,22 +2939,8 @@ issue_or_create_cert() {
 
 
 write_nginx_http_site() {
-    local panel_location_block=""
     local http2_listen_suffix=" http2"
     local http2_directive=""
-    if is_3xui_backend; then
-        panel_location_block="$(cat <<EOF
-    location ${NGINX_PANEL_LOCATION} {
-        proxy_pass http://127.0.0.1:${XUI_PANEL_PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-
-EOF
-)"
-    fi
 
     local nginx_version
     nginx_version="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')"
@@ -3271,7 +2984,7 @@ ${http2_directive}
     ssl_prefer_server_ciphers off;
     client_max_body_size 50m;
 
-${panel_location_block}    # Dynamic shared HTTP routes are generated here.
+    # Dynamic shared HTTP routes are generated here.
 
     include ${NGINX_HTTP_LOCATION_DIR}/*.conf;
 
@@ -3335,149 +3048,6 @@ server {
 EOF
 
     ln -sf "${NGINX_HTTP_SITE_FILE}" /etc/nginx/sites-enabled/vpnbot_vray_http.conf
-}
-
-
-write_installer_state() {
-    local panel_base_url="http://127.0.0.1:${XUI_PANEL_PORT}/${XUI_PANEL_WEBBASEPATH}"
-    umask 077
-    PANEL_PORT="${XUI_PANEL_PORT}" \
-    PANEL_WEB_BASE_PATH="${XUI_PANEL_WEBBASEPATH}" \
-    PANEL_USERNAME="${XUI_PANEL_USERNAME}" \
-    PANEL_PASSWORD="${XUI_PANEL_PASSWORD}" \
-    PANEL_BASE_URL="${panel_base_url}" \
-    PANEL_DOMAIN_VALUE="${PANEL_DOMAIN}" \
-    APP_DOMAIN_VALUE="${APP_DOMAIN}" \
-    MT_DOMAIN_VALUE="${MT_DOMAIN}" \
-    SHARED_HTTP_DOMAIN_VALUE="${SHARED_HTTP_DOMAIN}" \
-    PUBLIC_DOMAIN_VALUE="${PUBLIC_DOMAIN}" \
-    DDNS_PROVIDER_VALUE="${DDNS_PROVIDER}" \
-    DDNS_ZONE_VALUE="${DDNS_ZONE}" \
-    DDNS_HOST_LABEL_VALUE="${DDNS_HOST_LABEL}" \
-    DDNS_LABEL_SUFFIX_VALUE="${DDNS_LABEL_SUFFIX}" \
-    VPNBOT_SERVER_ID_VALUE="${VPNBOT_SERVER_ID}" \
-    SYNC_SCRIPT_VALUE="${XUI_SYNC_SCRIPT}" \
-    SSL_CERT_VALUE="${NGINX_SSL_CERT}" \
-    SSL_KEY_VALUE="${NGINX_SSL_KEY}" \
-    HTTP_FRONTEND_LOCAL_PORT_VALUE="${HTTP_FRONTEND_LOCAL_PORT}" \
-    HTTP_FRONTEND_PROXY_LOCAL_PORT_VALUE="${HTTP_FRONTEND_PROXY_LOCAL_PORT}" \
-    HTTP_FALLBACK_LOCAL_PORT_VALUE="${HTTP_FALLBACK_LOCAL_PORT}" \
-    INSTALLER_STATE_FILE="${XUI_INSTALLER_STATE_FILE}" \
-    python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-payload = {
-    "panel_port": int(os.environ["PANEL_PORT"]),
-    "panel_web_base_path": os.environ["PANEL_WEB_BASE_PATH"],
-    "panel_username": os.environ["PANEL_USERNAME"],
-    "panel_password": os.environ["PANEL_PASSWORD"],
-    "panel_base_url": os.environ["PANEL_BASE_URL"],
-    "panel_domain": os.environ["PANEL_DOMAIN_VALUE"],
-    "app_domain": os.environ["APP_DOMAIN_VALUE"],
-    "mt_domain": os.environ["MT_DOMAIN_VALUE"],
-    "shared_http_domain": os.environ["SHARED_HTTP_DOMAIN_VALUE"],
-    "public_domain": os.environ["PUBLIC_DOMAIN_VALUE"],
-    "ddns_provider": os.environ["DDNS_PROVIDER_VALUE"],
-    "ddns_zone": os.environ["DDNS_ZONE_VALUE"],
-    "ddns_host_label": os.environ["DDNS_HOST_LABEL_VALUE"],
-    "ddns_label_suffix": os.environ["DDNS_LABEL_SUFFIX_VALUE"],
-    "vpnbot_server_id": os.environ["VPNBOT_SERVER_ID_VALUE"],
-    "sync_script": os.environ["SYNC_SCRIPT_VALUE"],
-    "ssl_cert": os.environ["SSL_CERT_VALUE"],
-    "ssl_key": os.environ["SSL_KEY_VALUE"],
-    "http_frontend_local_port": int(os.environ["HTTP_FRONTEND_LOCAL_PORT_VALUE"]),
-    "http_frontend_proxy_local_port": int(os.environ["HTTP_FRONTEND_PROXY_LOCAL_PORT_VALUE"]),
-    "http_fallback_local_port": int(os.environ.get("HTTP_FALLBACK_LOCAL_PORT_VALUE", "10445")),
-}
-Path(os.environ["INSTALLER_STATE_FILE"]).write_text(
-    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-    encoding="utf-8",
-)
-PY
-    chmod 600 "${XUI_INSTALLER_STATE_FILE}"
-}
-
-
-write_rollout_bundle() {
-    local panel_host public_dns_name server_public_ip panel_api_url mt_suggested_domain effective_mt_domain
-    panel_host="${PANEL_DOMAIN:-${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-}}}}"
-    public_dns_name="${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-}}}"
-    server_public_ip="$(get_primary_ipv4)"
-    if [[ -n "${panel_host}" ]]; then
-        panel_api_url="https://${panel_host}${NGINX_PANEL_LOCATION%/}"
-    else
-        panel_api_url=""
-    fi
-
-    if [[ "${public_dns_name}" == app.* ]]; then
-        mt_suggested_domain="mt.${public_dns_name#app.}"
-    elif [[ "${panel_host}" == panel.* ]]; then
-        mt_suggested_domain="mt.${panel_host#panel.}"
-    else
-        mt_suggested_domain=""
-    fi
-    effective_mt_domain="${MT_DOMAIN:-${mt_suggested_domain}}"
-
-    umask 077
-    PANEL_DOMAIN_VALUE="${panel_host}" \
-    APP_DOMAIN_VALUE="${public_dns_name}" \
-    MT_DOMAIN_VALUE="${effective_mt_domain}" \
-    SHARED_HTTP_DOMAIN_VALUE="${SHARED_HTTP_DOMAIN}" \
-    PUBLIC_DOMAIN_VALUE="${PUBLIC_DOMAIN}" \
-    MT_SUGGESTED_DOMAIN_VALUE="${mt_suggested_domain}" \
-    PANEL_API_URL_VALUE="${panel_api_url}" \
-    PUBLIC_IP_VALUE="${server_public_ip}" \
-    XUI_PANEL_PORT_VALUE="${XUI_PANEL_PORT}" \
-    XUI_PANEL_WEBBASEPATH_VALUE="${XUI_PANEL_WEBBASEPATH}" \
-    ROLLOUT_BUNDLE_FILE="${XUI_ROLLOUT_BUNDLE_FILE}" \
-    python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-payload = {
-    "domain_roles": {
-        "panel_domain": str(os.environ.get("PANEL_DOMAIN_VALUE", "")).strip(),
-        "app_domain": str(os.environ.get("APP_DOMAIN_VALUE", "")).strip(),
-        "mt_domain": str(os.environ.get("MT_DOMAIN_VALUE", "")).strip(),
-        "shared_http_domain": str(os.environ.get("SHARED_HTTP_DOMAIN_VALUE", "")).strip(),
-        "public_domain_legacy_alias": str(os.environ.get("PUBLIC_DOMAIN_VALUE", "")).strip(),
-        "mt_suggested_domain": str(os.environ.get("MT_SUGGESTED_DOMAIN_VALUE", "")).strip(),
-    },
-    "panel": {
-        "api_url": str(os.environ.get("PANEL_API_URL_VALUE", "")).strip(),
-        "api_host_suggested": str(os.environ.get("PUBLIC_IP_VALUE", "")).strip(),
-        "backend_port": int(os.environ.get("XUI_PANEL_PORT_VALUE", "2053") or 2053),
-        "web_base_path": str(os.environ.get("XUI_PANEL_WEBBASEPATH_VALUE", "")).strip(),
-    },
-    "env_examples": {
-        "install_vray": {
-            "APP_DOMAIN": str(os.environ.get("APP_DOMAIN_VALUE", "")).strip(),
-            "PANEL_DOMAIN": str(os.environ.get("PANEL_DOMAIN_VALUE", "")).strip(),
-        },
-        "install_mtproxy": {
-            "MTPROXY_PUBLIC_HOST": str(os.environ.get("MT_DOMAIN_VALUE", "")).strip(),
-            "MTPROXY_TLS_DOMAIN": "<external-real-domain-not-this-server>",
-        },
-    },
-    "rules": [
-        "panel_domain is for 3x-ui panel and bot api_url",
-        "app_domain is the user-facing VLESS/shared HTTP domain",
-        "mt_suggested_domain is the recommended public hostname for MTProxy links",
-        "MTPROXY_PUBLIC_HOST must resolve to this server; MTPROXY_TLS_DOMAIN for ee must resolve away from this server",
-        "do not reuse the exact same SNI hostname for two different backends on one shared external port",
-        "for bot runtime, prefer api_host_suggested as api_host when you want panel API to avoid domain/SNI conflicts",
-    ],
-}
-
-Path(os.environ["ROLLOUT_BUNDLE_FILE"]).write_text(
-    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-    encoding="utf-8",
-)
-PY
-    chmod 600 "${XUI_ROLLOUT_BUNDLE_FILE}"
 }
 
 
@@ -3716,13 +3286,13 @@ payload = {
         "sync_script": str(os.environ.get("XRAY_SYNC_SCRIPT_VALUE", "")).strip(),
     },
     "rules": [
-        "standalone xray-core is installed in a dedicated folder without x-ui",
+        "standalone xray-core is installed in a dedicated folder",
         "online/recent-activity stats are served by a local-only vpnbot-xray-online.service API",
         "abuse triage is served by the same local-only tracker at /abuse and is built from Xray access.log",
         "VPnBot treats the online tracker as required for xray-core online stats and does not silently fall back to direct access.log parsing",
         "VPnBot add/remove uses vpnbot-xrayctl on the node first and falls back to legacy SSH/SFTP only while old nodes are being updated",
         "shared 443 publication is handled through nginx stream/http route sync for managed xray inbounds",
-        "VPnBot manages this backend through SSH plus the local Xray API, not through 3x-ui panel endpoints",
+        "VPnBot manages this backend through SSH plus the local Xray API",
         "runtime config must set backend_type=xray-core and skip_subscription=true for standalone nodes",
     ],
 }
@@ -3777,17 +3347,6 @@ Type=oneshot
 ExecStart=${XRAY_SYNC_SCRIPT}
 EOF
 
-    cat > "${XRAY_SYNC_PATH}" <<EOF
-[Unit]
-Description=Watch xray managed inbounds changes and regenerate nginx routes
-
-[Path]
-PathChanged=${XRAY_CORE_MANAGED_INBOUNDS_FILE}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
     cat > "${XRAY_SYNC_TIMER}" <<EOF
 [Unit]
 Description=Periodic VPnBot xray route sync
@@ -3835,99 +3394,12 @@ EOF
 }
 
 
-write_xui_sync_assets() {
-    mkdir -p "${VPNBOT_ASSET_LIB_DIR}"
-    local helper_asset
-    helper_asset="${VPNBOT_ASSET_LIB_DIR}/vpnbot_xui_sync_routes.py"
-    download_node_installer_asset "assets/vpnbot_xui_sync_routes.py" "${helper_asset}" 755
-    cat > "${XUI_SYNC_SCRIPT}" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-export XUI_DB_PATH=${XUI_DB_PATH@Q}
-export XUI_BIN_CONFIG=${XUI_BIN_CONFIG@Q}
-export NGINX_HTTP_LOCATION_DIR=${NGINX_HTTP_LOCATION_DIR@Q}
-export NGINX_STREAM_MAP_FILE=${NGINX_STREAM_MAP_FILE@Q}
-export NGINX_STREAM_SERVER_FILE=${NGINX_STREAM_SERVER_FILE@Q}
-export HTTP_FRONTEND_LOCAL_PORT=${HTTP_FRONTEND_LOCAL_PORT@Q}
-export XUI_INSTALLER_STATE_FILE=${XUI_INSTALLER_STATE_FILE@Q}
-export PANEL_DOMAIN=${PANEL_DOMAIN@Q}
-export APP_DOMAIN=${APP_DOMAIN@Q}
-export SHARED_HTTP_DOMAIN=${SHARED_HTTP_DOMAIN@Q}
-export PUBLIC_DOMAIN=${PUBLIC_DOMAIN@Q}
-export XUI_SYNC_STATE_DIR=${XUI_SYNC_STATE_DIR@Q}
-export VPNBOT_NGINX_AUTOSTART=${VPNBOT_NGINX_AUTOSTART@Q}
-exec /usr/bin/env python3 ${helper_asset@Q} "\$@"
-EOF
-    chmod 755 "${XUI_SYNC_SCRIPT}"
-    log "Installed 3x-ui route sync helper: ${XUI_SYNC_SCRIPT}"
-
-    cat > "${XUI_SYNC_SERVICE}" <<EOF
-[Unit]
-Description=VPnBot x-ui route sync
-After=network-online.target x-ui.service nginx.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=${XUI_SYNC_SCRIPT}
-EOF
-
-    cat > "${XUI_SYNC_PATH}" <<EOF
-[Unit]
-Description=Watch x-ui config changes and regenerate nginx routes
-
-[Path]
-PathChanged=${XUI_DB_PATH}
-PathChanged=${XUI_BIN_CONFIG}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    cat > "${XUI_SYNC_TIMER}" <<EOF
-[Unit]
-Description=Periodic VPnBot x-ui route sync
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=2min
-RandomizedDelaySec=15s
-Unit=vpnbot-xui-sync-routes.service
-
-[Install]
-WantedBy=timers.target
-EOF
-}
-
-
 write_reality_sni_pool_asset() {
     mkdir -p "${VPNBOT_ASSET_SHARE_DIR}"
     mkdir -p "$(dirname "${VPNBOT_REALITY_SNI_POOL_FILE}")"
     download_node_installer_asset "assets/reality_sni_pool.json" "${VPNBOT_REALITY_SNI_POOL_FILE}" 644
     log "Installed shared REALITY SNI pool: ${VPNBOT_REALITY_SNI_POOL_FILE}"
 }
-
-
-write_preset_helper() {
-    mkdir -p "${VPNBOT_ASSET_LIB_DIR}"
-    write_reality_sni_pool_asset
-    local helper_asset
-    helper_asset="${VPNBOT_ASSET_LIB_DIR}/vpnbot_xui_presets.py"
-    download_node_installer_asset "assets/vpnbot_xui_presets.py" "${helper_asset}" 755
-    cat > "${XUI_PRESET_HELPER}" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-export XUI_INSTALLER_STATE_FILE=${XUI_INSTALLER_STATE_FILE@Q}
-export XUI_SYNC_SCRIPT=${XUI_SYNC_SCRIPT@Q}
-export NGINX_SSL_CERT=${NGINX_SSL_CERT@Q}
-export NGINX_SSL_KEY=${NGINX_SSL_KEY@Q}
-export VPNBOT_REALITY_SNI_POOL_FILE=${VPNBOT_REALITY_SNI_POOL_FILE@Q}
-exec /usr/bin/env python3 ${helper_asset@Q} "\$@"
-EOF
-    chmod 755 "${XUI_PRESET_HELPER}"
-    log "Installed 3x-ui preset helper: ${XUI_PRESET_HELPER}"
-}
-
 
 
 write_vless_preset_helper() {
@@ -3940,7 +3412,6 @@ write_vless_preset_helper() {
 #!/usr/bin/env bash
 set -euo pipefail
 export VPNBOT_VLESS_BACKEND=${VPNBOT_VLESS_BACKEND@Q}
-export XUI_PRESET_HELPER=${XUI_PRESET_HELPER@Q}
 export XRAY_CORE_INSTALLER_STATE_FILE=${XRAY_CORE_INSTALLER_STATE_FILE@Q}
 export XRAY_CORE_BIN=${XRAY_CORE_BIN@Q}
 export XRAY_CORE_CONFIG_DIR=${XRAY_CORE_CONFIG_DIR@Q}
@@ -3964,7 +3435,7 @@ write_direct_helpers() {
     cat > "${NGINX_WS_HELPER}" <<'WS'
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Deprecated: use remark/tag markers in 3x-ui and run vpnbot-xui-sync-routes"
+echo "Deprecated: use remark/tag markers in managed Xray-core inbounds and run vpnbot-xray-sync-routes"
 echo "Marker examples:"
 echo "  [443] or [shared:443] inbound over shared TCP/443"
 echo "  [8443] or [shared:8443] inbound over shared TCP/8443"
@@ -3975,7 +3446,7 @@ WS
     cat > "${NGINX_GRPC_HELPER}" <<'GRPC'
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Deprecated: use remark/tag markers in 3x-ui and run vpnbot-xui-sync-routes"
+echo "Deprecated: use remark/tag markers in managed Xray-core inbounds and run vpnbot-xray-sync-routes"
 GRPC
     chmod 755 "${NGINX_GRPC_HELPER}"
 
@@ -3994,40 +3465,24 @@ LIST
 
 enable_sync() {
     systemctl daemon-reload
-    if is_xray_core_backend; then
-        systemctl disable --now vpnbot-xui-sync-routes.path vpnbot-xui-sync-routes.timer >/dev/null 2>&1 || true
-        systemctl reset-failed vpnbot-xui-sync-routes.path vpnbot-xui-sync-routes.timer vpnbot-xui-sync-routes.service >/dev/null 2>&1 || true
-        if [[ "${XRAY_SYNC_PATH_ENABLED}" == "1" ]]; then
-            systemctl enable --now vpnbot-xray-sync-routes.path
-        else
-            systemctl disable --now vpnbot-xray-sync-routes.path >/dev/null 2>&1 || true
-            systemctl reset-failed vpnbot-xray-sync-routes.path >/dev/null 2>&1 || true
-        fi
-        systemctl enable --now vpnbot-xray-sync-routes.timer
-        systemctl start vpnbot-xray-sync-routes.service
-        return 0
-    fi
-    systemctl disable --now vpnbot-xray-sync-routes.path vpnbot-xray-sync-routes.timer >/dev/null 2>&1 || true
-    systemctl reset-failed vpnbot-xray-sync-routes.path vpnbot-xray-sync-routes.timer vpnbot-xray-sync-routes.service >/dev/null 2>&1 || true
-    systemctl enable --now vpnbot-xui-sync-routes.path
-    systemctl enable --now vpnbot-xui-sync-routes.timer
-    systemctl start vpnbot-xui-sync-routes.service
+    systemctl disable --now vpnbot-xray-sync-routes.path >/dev/null 2>&1 || true
+    systemctl reset-failed vpnbot-xray-sync-routes.path >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/vpnbot-xray-sync-routes.path
+    systemctl daemon-reload
+    systemctl enable --now vpnbot-xray-sync-routes.timer
+    systemctl start vpnbot-xray-sync-routes.service
 }
 
 
 run_initial_preset_flow() {
-    if [[ "${XUI_PRESET_AUTORUN}" == "none" ]]; then
+    if [[ "${VPNBOT_PRESET_AUTORUN}" == "none" ]]; then
         return 0
     fi
 
     if [[ -t 0 && -t 1 ]]; then
         echo ""
         info "Inbound catalog"
-        if is_xray_core_backend; then
-            echo "  The installer can create standalone Xray-core inbound variants with direct/shared publication right now."
-        else
-            echo "  The installer can create grouped inbound variants for the current VLESS backend right now."
-        fi
+        echo "  The installer can create standalone Xray-core inbound variants with direct/shared publication right now."
         echo "  If you skip it now, you can run: ${VPNBOT_VLESS_PRESET_HELPER}"
         "${VPNBOT_VLESS_PRESET_HELPER}"
     else
@@ -4096,8 +3551,8 @@ show_xray_core_summary() {
     echo ""
     info "What this mode does"
     echo "  • installs official Xray-core into a dedicated folder"
-    echo "  • starts a separate systemd service without x-ui"
-    echo "  • keeps configs, assets and logs away from /usr/local/x-ui"
+    echo "  • starts a dedicated systemd service for VPnBot-managed Xray"
+    echo "  • keeps configs, assets and logs under ${XRAY_CORE_ROOT}"
     echo "  • runs a local-only online tracker service from Xray access.log"
     echo "  • exposes a local-only abuse audit at /abuse for target-port triage"
     echo "  • exposes local-only multi-IP scoring at /abuse/multi-ip"
@@ -4112,7 +3567,7 @@ show_xray_core_summary() {
     echo "  VPnBot online stats require ${XRAY_ONLINE_TRACKER_SERVICE_NAME}; missing tracker means the node is installed incorrectly."
     echo "  Abuse checks can query: curl '${XRAY_ABUSE_AUDIT_URL}?port=49907'"
     echo "  Multi-IP scoring can query: curl '${XRAY_ABUSE_MULTI_IP_URL}'"
-    echo "  Do not configure it as a 3x-ui panel server in /root/vpnbotdata/config/servers.json."
+    echo "  Do not configure it as a panel/API server in /root/vpnbotdata/config/servers.json."
     echo "  Use backend_type=xray-core and skip_subscription=true."
     echo ""
     info "Shared ports"
@@ -4144,239 +3599,7 @@ show_xray_core_summary() {
 
 
 show_summary() {
-    if is_xray_core_backend; then
-        show_xray_core_summary
-        return 0
-    fi
-
-    local panel_host panel_browser_url panel_api_url server_public_ip public_dns_name effective_mt_domain mt_suggested_domain
-    panel_host="${PANEL_DOMAIN:-${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-}}}}"
-    if [[ -z "${panel_host}" ]]; then
-        panel_host="$(get_primary_ipv4)"
-    fi
-    if [[ -n "${panel_host}" ]]; then
-        panel_browser_url="https://${panel_host}${NGINX_PANEL_LOCATION}"
-    else
-        panel_browser_url="https://<server-ip-or-domain>${NGINX_PANEL_LOCATION}"
-    fi
-    panel_api_url="${panel_browser_url%/}"
-    server_public_ip="$(get_primary_ipv4)"
-    public_dns_name="${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-}}}"
-    if [[ "${public_dns_name}" == app.* ]]; then
-        mt_suggested_domain="mt.${public_dns_name#app.}"
-    elif [[ "${panel_host}" == panel.* ]]; then
-        mt_suggested_domain="mt.${panel_host#panel.}"
-    else
-        mt_suggested_domain="mt.<base>"
-    fi
-    effective_mt_domain="${MT_DOMAIN:-${mt_suggested_domain}}"
-
-    echo ""
-    echo "==========================================="
-    echo "  3x-ui / VLESS install complete"
-    echo "==========================================="
-    echo ""
-    info "3x-ui panel access"
-    echo "  Panel URL: ${panel_browser_url}"
-    echo "  Username: ${XUI_PANEL_USERNAME}"
-    echo "  Password: ${XUI_PANEL_PASSWORD}"
-    echo "  Credentials saved to: ${XUI_INSTALLER_STATE_FILE}"
-    echo "  Rollout bundle saved to: ${XUI_ROLLOUT_BUNDLE_FILE}"
-    echo "  Note: open the panel URL with the trailing slash, not /login"
-    echo ""
-    info "Rollout block"
-    echo "  Domain for panel: ${panel_host:-<set PANEL_DOMAIN>}"
-    echo "  Domain for users: ${public_dns_name:-<set APP_DOMAIN/PUBLIC_DOMAIN>}"
-    echo "  Recommended public host for MTProxy links: ${mt_suggested_domain}"
-    echo "  Active MTProxy public host: ${effective_mt_domain}"
-    echo "  Fake TLS domain for MTProxy ee: set a real external domain, not this node"
-    echo "  Panel/API url for bot: ${panel_api_url}"
-    echo "  Recommended api_host override: ${server_public_ip:-<public-ip>}"
-    echo ""
-    info "Ready env block"
-    echo "  Use these values for the next rollout step:"
-    printf 'APP_DOMAIN=%q\n' "${public_dns_name:-}"
-    printf 'PANEL_DOMAIN=%q\n' "${panel_host:-}"
-    printf 'MTPROXY_PUBLIC_HOST=%q\n' "${effective_mt_domain:-}"
-    printf 'MTPROXY_TLS_DOMAIN=%q\n' "<external-real-domain-not-this-server>"
-    echo ""
-    info "3x-ui panel backend"
-    echo "  Backend port: ${XUI_PANEL_PORT}"
-    echo "  WebBasePath: ${XUI_PANEL_WEBBASEPATH}"
-    echo "  Xray access log: ${XUI_XRAY_ACCESS_LOG}"
-    echo "  Xray error log: ${XUI_XRAY_ERROR_LOG}"
-    echo "  Xray loglevel: ${XUI_XRAY_LOGLEVEL} (clientIps needs access log enabled)"
-    echo ""
-    info "Shared TCP port mode"
-    echo "  Panel domain: ${PANEL_DOMAIN:-${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-<set APP_DOMAIN/PUBLIC_DOMAIN>}}}}"
-    echo "  Shared HTTP domain: ${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-<set APP_DOMAIN/PUBLIC_DOMAIN>}}}"
-    echo "  Server public IPv4: ${server_public_ip:-<unknown>}"
-    if [[ -n "${DDNS_ZONE}" ]]; then
-        echo "  Dynv6 zone: ${DDNS_ZONE}"
-        echo "  Dynv6 hostname: ${PUBLIC_DOMAIN}"
-        echo "  Dynv6 host label: ${DDNS_HOST_LABEL:-<auto>}"
-        if [[ -n "${VPNBOT_SERVER_ID}" ]]; then
-            echo "  Derived from server_id: ${VPNBOT_SERVER_ID}"
-        fi
-        echo "  Saved Dynv6 defaults: ${XUI_INSTALLER_DEFAULTS_FILE}"
-    fi
-    echo "  nginx public shared TCP ports -> stream mux"
-    echo "  local HTTPS frontend: 127.0.0.1:${HTTP_FRONTEND_LOCAL_PORT}"
-    echo "  local HTTPS frontend (PROXY protocol): 127.0.0.1:${HTTP_FRONTEND_PROXY_LOCAL_PORT}"
-    echo ""
-    info "Publication markers"
-    echo "  [443] or [shared:443]     -> publish through shared TCP/443"
-    echo "  [8443] or [shared:8443]   -> publish through shared TCP/8443"
-    echo "  [direct]                  -> keep the inbound on its own real external port"
-    echo ""
-    info "Bot Runtime Hint"
-    echo "  If you add this server to /root/vpnbotdata/config/servers.json:"
-    echo "  • DNS name for VLESS/TLS users: ${public_dns_name:-<set APP_DOMAIN/PUBLIC_DOMAIN>}"
-    echo "  • Panel/API host for the bot: ${panel_host:-<set PANEL_DOMAIN>}"
-    echo "  • Server public IPv4: ${server_public_ip:-<unknown>}"
-    echo "  • api_url: ${panel_api_url}"
-    echo "  • api_user: ${XUI_PANEL_USERNAME}"
-    echo "  • api_password: ${XUI_PANEL_PASSWORD}"
-    echo "  • For VLESS 'domain' use the app/shared domain above."
-    echo "  • Do not confuse panel URL and user-facing domain: panel URL is for the bot/admin API, domain is what clients import in keys."
-    echo ""
-    info "Ready JSON for Bot"
-    echo "  Paste this block into /root/vpnbotdata/config/servers.json on the bot host:"
-    BOT_SERVER_ID_VALUE="${VPNBOT_SERVER_ID:-server_id_here}" \
-    BOT_SERVER_NAME_VALUE="${VPNBOT_SERVER_ID:-FLAG Server Description}" \
-    BOT_PUBLIC_DOMAIN_VALUE="${public_dns_name:-${server_public_ip}}" \
-    BOT_PUBLIC_IP_VALUE="${server_public_ip}" \
-    BOT_API_HOST_VALUE="${server_public_ip}" \
-    BOT_PANEL_API_URL_VALUE="${panel_api_url}" \
-    BOT_PANEL_USER_VALUE="${XUI_PANEL_USERNAME}" \
-    BOT_PANEL_PASSWORD_VALUE="${XUI_PANEL_PASSWORD}" \
-    BOT_PUBLIC_PORT_VALUE="${BOT_PUBLIC_PORT_VALUE:-443}" \
-    BOT_SUB_PORT_VALUE="2096" \
-    BOT_SUB_SCHEME_VALUE="http" \
-    python3 - <<'PY'
-import json
-import os
-
-server_id = str(os.environ.get("BOT_SERVER_ID_VALUE", "")).strip().lower() or "server_id_here"
-server_name = str(os.environ.get("BOT_SERVER_NAME_VALUE", "")).strip() or "FLAG Server Description"
-public_domain = str(os.environ.get("BOT_PUBLIC_DOMAIN_VALUE", "")).strip()
-public_ip = str(os.environ.get("BOT_PUBLIC_IP_VALUE", "")).strip()
-api_host = str(os.environ.get("BOT_API_HOST_VALUE", "")).strip()
-api_url = str(os.environ.get("BOT_PANEL_API_URL_VALUE", "")).strip()
-api_user = str(os.environ.get("BOT_PANEL_USER_VALUE", "")).strip()
-api_password = str(os.environ.get("BOT_PANEL_PASSWORD_VALUE", "")).strip()
-public_port = int(os.environ.get("BOT_PUBLIC_PORT_VALUE", "443") or 443)
-sub_port = int(os.environ.get("BOT_SUB_PORT_VALUE", "2096") or 2096)
-sub_scheme = str(os.environ.get("BOT_SUB_SCHEME_VALUE", "http") or "http").strip()
-
-payload = {
-    server_id: {
-        "name": server_name,
-        "domain": public_domain,
-        "port": public_port,
-        "location": "Country, City",
-        "api_url": api_url,
-        "api_host": api_host,
-        "api_user": api_user,
-        "api_password": api_password,
-        "allowed_levels": ["vless_max"],
-        "enabled": True,
-        "sub_port": sub_port,
-        "sub_scheme": sub_scheme,
-    }
-}
-print(json.dumps(payload, ensure_ascii=False, indent=2))
-PY
-    echo "  Note: field 'port' above is the user-facing public port, not the backend x-ui panel port."
-    echo ""
-    info "Ready Rollout Bundle"
-    echo "  Use this as structured context for the next AI / operator when rolling out linked services on the same host:"
-    PANEL_DOMAIN_VALUE="${panel_host}" \
-    APP_DOMAIN_VALUE="${public_dns_name}" \
-    SHARED_HTTP_DOMAIN_VALUE="${SHARED_HTTP_DOMAIN:-${APP_DOMAIN:-${PUBLIC_DOMAIN:-}}}" \
-    PUBLIC_DOMAIN_VALUE="${PUBLIC_DOMAIN}" \
-    MT_SUGGESTED_DOMAIN_VALUE="$(python3 - <<'PY'
-import os
-panel = str(os.environ.get("PANEL_DOMAIN_VALUE", "")).strip()
-app = str(os.environ.get("APP_DOMAIN_VALUE", "")).strip()
-if panel.startswith("panel."):
-    print("mt." + panel[len("panel."):])
-elif app.startswith("app."):
-    print("mt." + app[len("app."):])
-elif panel:
-    print("mt." + panel)
-elif app:
-    print("mt." + app)
-else:
-    print("")
-PY
-)" \
-    python3 - <<'PY'
-import json
-import os
-
-payload = {
-    "domain_scheme": {
-        "panel_domain": str(os.environ.get("PANEL_DOMAIN_VALUE", "")).strip(),
-        "app_domain": str(os.environ.get("APP_DOMAIN_VALUE", "")).strip(),
-        "shared_http_domain": str(os.environ.get("SHARED_HTTP_DOMAIN_VALUE", "")).strip(),
-        "public_domain_legacy_alias": str(os.environ.get("PUBLIC_DOMAIN_VALUE", "")).strip(),
-        "mt_suggested_domain": str(os.environ.get("MT_SUGGESTED_DOMAIN_VALUE", "")).strip(),
-    },
-    "rules": [
-        "panel_domain is for 3x-ui panel and api_url used by the bot/admin API",
-        "app_domain is the user-facing VLESS/shared HTTP hostname",
-        "mt_suggested_domain should be used as MTPROXY_PUBLIC_HOST for MTProxy links",
-        "MTPROXY_TLS_DOMAIN for ee must be a real external fake TLS domain that does not resolve to this node",
-        "do not reuse the exact same SNI hostname for two different backends on one shared 443",
-    ],
-}
-print(json.dumps(payload, ensure_ascii=False, indent=2))
-PY
-    echo "  Note: api_host is the direct IP override for panel API requests when you want the bot to avoid domain/SNI problems."
-    echo ""
-    info "What happens automatically"
-    echo "  • tls/reality + [shared-port] on any transport -> nginx stream SNI route on that shared port"
-    echo "  • ws/grpc/http-like without tls/reality + [shared-port] -> nginx HTTP route on that shared port"
-    echo "  • [direct] -> no shared mux, inbound keeps its own port"
-    echo "  • x-ui DB/config changes trigger vpnbot-xui-sync-routes.path"
-    echo "  • periodic safety sync runs via vpnbot-xui-sync-routes.timer"
-    echo ""
-    info "Helper commands"
-    echo "  Quick install command:"
-    echo "  ${INSTALL_VRAY_CURL_COMMAND}"
-    echo ""
-    echo "  vpnbot-xui-sync-routes"
-    echo "  vpnbot-xui-sync-routes --explain"
-    echo "  ${VPNBOT_VLESS_PRESET_HELPER}"
-    echo "  ${VPNBOT_VLESS_PRESET_HELPER} --list"
-    echo "  ${XUI_PRESET_HELPER} --catalog-json"
-    echo "  vpnbot-nginx-list-routes"
-    echo "  systemctl status vpnbot-xui-sync-routes.path --no-pager"
-    echo "  systemctl status vpnbot-xui-sync-routes.timer --no-pager"
-    echo "  cat ${XUI_SYNC_STATE_DIR}/last_sync_report.txt"
-    echo "  cat ${XUI_INSTALLER_STATE_FILE}"
-    echo "  cat ${XUI_INSTALLER_DEFAULTS_FILE}"
-    echo "  Example DDNS env: DDNS_PROVIDER=dynv6 DDNS_ZONE=myvpn.dynv6.net DDNS_TOKEN=<ddclient-password> VPNBOT_SERVER_ID=de-bmv4-ultra-u2"
-    echo "  Or pass full Dynv6 text: DDNS_PROVIDER=dynv6 DDNS_INSTRUCTIONS_TEXT=\$'protocol=dyndns2\\nserver=dynv6.com\\nlogin=none\\npassword=...\\nmyvpn.dynv6.net'"
-    echo "  Optional override: DDNS_HOST_LABEL=de-bmv4-manual-tls or DDNS_LABEL_SUFFIX=vmess"
-    echo ""
-    info "Cheat sheet"
-    echo "  1. Run ${VPNBOT_VLESS_PRESET_HELPER}"
-    echo "  2. Select one or several inbound lines from the catalog"
-    echo "  3. The helper will parse protocol/transport/security/SNI from the selected lines"
-    echo "  4. If a direct or shared port is busy, the helper will try to auto-resolve it and print what changed"
-    echo "  5. Sync then rebuilds nginx routes automatically"
-    echo "  6. If you want to force it immediately: vpnbot-xui-sync-routes"
-    echo "  7. If something was not published through shared port, read last_sync_report.txt"
-    echo "  8. The catalog is grouped into Reality TCP, Reality XHTTP and TLS."
-    echo ""
-    info "Architecture notes"
-    echo "  • AWG should keep UDP/443."
-    echo "  • Shared VLESS/TLS mux can own multiple TCP ports, not only 443."
-    echo "  • Direct-mode inbound ports are still real ports."
-    echo "  • For tls/reality shared mode, set proper serverNames in the inbound."
-    echo "  • Shared ports remove external port collisions, but tls/reality still need unique SNI per route."
+    show_xray_core_summary
 }
 
 detect_current_ssh_port() {
@@ -4643,43 +3866,24 @@ main() {
     configure_dynv6_domain
     normalize_inputs
     validate_configured_public_hosts
-    if is_xray_core_backend; then
-        install_standalone_xray_core
-        write_xrayctl_assets
-        write_xray_online_tracker_assets
-        write_xray_conn_guard_assets
-        write_node_watchdog_assets
-        write_xray_core_updater_assets
-        ensure_nginx_layout
-        ensure_bootstrap_tls_cert
-        write_nginx_http_site
-        issue_or_create_cert
-        write_nginx_http_site
-        write_xray_core_installer_state
-        write_xray_core_rollout_bundle
-        write_xray_sync_assets
-        write_xray_route_heal_assets
-        write_vless_preset_helper
-        write_direct_helpers
-        enable_sync
-    else
-        install_3xui_noninteractive
-        configure_xray_minimal_logging
-        write_xray_logrotate_config
-        panel_direct_access_local_only
-        ensure_nginx_layout
-        ensure_bootstrap_tls_cert
-        write_nginx_http_site
-        issue_or_create_cert
-        write_nginx_http_site
-        write_installer_state
-        write_rollout_bundle
-        write_xui_sync_assets
-        write_preset_helper
-        write_vless_preset_helper
-        write_direct_helpers
-        enable_sync
-    fi
+    install_standalone_xray_core
+    write_xrayctl_assets
+    write_xray_online_tracker_assets
+    write_xray_conn_guard_assets
+    write_node_watchdog_assets
+    write_xray_core_updater_assets
+    ensure_nginx_layout
+    ensure_bootstrap_tls_cert
+    write_nginx_http_site
+    issue_or_create_cert
+    write_nginx_http_site
+    write_xray_core_installer_state
+    write_xray_core_rollout_bundle
+    write_xray_sync_assets
+    write_xray_route_heal_assets
+    write_vless_preset_helper
+    write_direct_helpers
+    enable_sync
     run_initial_preset_flow
     show_summary
 }

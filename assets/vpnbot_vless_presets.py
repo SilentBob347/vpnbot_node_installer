@@ -9,11 +9,8 @@ import socket
 import ssl
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-BACKEND_MODE = os.environ.get("VPNBOT_VLESS_BACKEND", "3x-ui")
-LEGACY_XUI_HELPER = os.environ.get("XUI_PRESET_HELPER", "/usr/local/bin/vpnbot-xui-presets")
 XRAY_STATE_FILE = Path(os.environ.get("XRAY_CORE_INSTALLER_STATE_FILE", "/etc/vpnbot-xray-installer-state.json"))
 XRAY_BIN = os.environ.get("XRAY_CORE_BIN", "/opt/vpnbot/xray-core/bin/xray")
 XRAY_CONFDIR = Path(os.environ.get("XRAY_CORE_CONFIG_DIR", "/opt/vpnbot/xray-core/config"))
@@ -620,28 +617,12 @@ def build_xray_catalog_groups() -> list[dict]:
 
 
 def fetch_catalog_groups() -> list[dict]:
-    if BACKEND_MODE == "3x-ui":
-        if not Path(LEGACY_XUI_HELPER).exists():
-            raise SystemExit(f"Legacy x-ui helper not found: {LEGACY_XUI_HELPER}")
-        result = subprocess.run(
-            [LEGACY_XUI_HELPER, "--catalog-json"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        payload = json.loads(result.stdout)
-        return payload if isinstance(payload, list) else []
     return build_xray_catalog_groups()
 
 
 def select_catalog_lines(groups: list[dict]) -> list[str]:
     options = []
-    heading = (
-        "Выбери inbound'ы для standalone Xray-core:"
-        if BACKEND_MODE == "xray-core"
-        else "Выбери inbound'ы для VLESS backend:"
-    )
-    print(heading)
+    print("Выбери inbound'ы для standalone Xray-core:")
     for group in groups:
         print("")
         print(f"[{group['title']}]")
@@ -724,23 +705,6 @@ def prompt_reality_line_from_sni() -> str:
     line = build_reality_line_from_sni(sni, protocol=protocol, network=network, no_flow=no_flow, mode=mode)
     print(f"Будет создана строка: {line}")
     return line
-
-
-def apply_lines_via_xui(lines: list[str]) -> int:
-    if not Path(LEGACY_XUI_HELPER).exists():
-        raise SystemExit(f"Legacy x-ui helper not found: {LEGACY_XUI_HELPER}")
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tmp:
-        json.dump(lines, tmp, ensure_ascii=False, indent=2)
-        tmp_path = tmp.name
-    try:
-        result = subprocess.run(
-            [LEGACY_XUI_HELPER, "--apply-lines-json", tmp_path],
-            check=False,
-            text=True,
-        )
-        return int(result.returncode or 0)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
 
 
 def get_xray_x25519() -> tuple[str, str]:
@@ -1255,14 +1219,10 @@ def main(argv: list[str]) -> int:
             text = item.strip()
             if text and text not in lines:
                 lines.append(text)
-        if BACKEND_MODE == "3x-ui":
-            return apply_lines_via_xui(lines)
         return apply_lines_via_xray(lines)
     lines = select_catalog_lines(groups)
     if not lines:
         return 0
-    if BACKEND_MODE == "3x-ui":
-        return apply_lines_via_xui(lines)
     return apply_lines_via_xray(lines)
 
 
