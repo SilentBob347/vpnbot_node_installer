@@ -56,6 +56,10 @@ files to stay readable and testable as normal files:
   minimum uptime, and reboot cooldown.
 - `assets/vpnbot_xray_sync_routes.py` - nginx route sync helper for standalone
   Xray-core managed inbounds.
+- `assets/vpnbot_xray_core_updater.py` - safe standalone Xray-core updater. It
+  checks official stable releases, validates the current config with the new
+  binary before replacing it, keeps backups, restarts `vpnbot-xray.service`, and
+  rolls back automatically if the service does not return to active state.
 - `assets/vpnbot_xui_sync_routes.py` - nginx route sync helper for legacy
   3x-ui inbounds.
 
@@ -110,6 +114,13 @@ The Xray connection guard remains enabled through
 `vpnbot-xray-conn-guard.timer`. Its path trigger is disabled by default because
 frequent managed-inbound file updates can trip systemd start limits while the
 periodic timer already refreshes the same iptables protection.
+
+Standalone Xray-core installs also include `vpnbot-xray-core-update.timer`.
+This is the binary auto-update path for `/opt/vpnbot/xray-core/bin/xray`, not a
+3x-ui updater. The timer runs once per day with a large random delay so the
+fleet does not restart at the same moment. The updater writes events to
+`/var/lib/vpnbot-xray-core-updater/events.jsonl` and keeps recent backups under
+`/var/lib/vpnbot-xray-core-updater/backups`.
 
 SSH lockdown is intentionally not installed by this Xray installer by default.
 The canonical SSH bootstrap is the separate `sshsecurity.sh` gist and repo file.

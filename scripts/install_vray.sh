@@ -218,6 +218,21 @@ XRAY_SYNC_STATE_DIR="${XRAY_SYNC_STATE_DIR:-/var/lib/vpnbot-xray-sync}"
 XRAY_CORE_RELEASE_CHANNEL="${XRAY_CORE_RELEASE_CHANNEL:-stable}"
 XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-latest}"
 XRAY_CORE_RELEASES_API_URL="${XRAY_CORE_RELEASES_API_URL:-https://api.github.com/repos/XTLS/Xray-core/releases}"
+XRAY_CORE_LATEST_DOWNLOAD_BASE="${XRAY_CORE_LATEST_DOWNLOAD_BASE:-https://github.com/XTLS/Xray-core/releases/latest/download}"
+XRAY_CORE_LATEST_RELEASE_URL="${XRAY_CORE_LATEST_RELEASE_URL:-https://github.com/XTLS/Xray-core/releases/latest}"
+XRAY_CORE_UPDATER_SCRIPT="${XRAY_CORE_UPDATER_SCRIPT:-/usr/local/bin/vpnbot-xray-core-updater}"
+XRAY_CORE_UPDATER_SERVICE_NAME="${XRAY_CORE_UPDATER_SERVICE_NAME:-vpnbot-xray-core-update.service}"
+XRAY_CORE_UPDATER_SERVICE_FILE="${XRAY_CORE_UPDATER_SERVICE_FILE:-/etc/systemd/system/${XRAY_CORE_UPDATER_SERVICE_NAME}}"
+XRAY_CORE_UPDATER_TIMER_FILE="${XRAY_CORE_UPDATER_TIMER_FILE:-/etc/systemd/system/vpnbot-xray-core-update.timer}"
+XRAY_CORE_UPDATER_ENABLED="${XRAY_CORE_UPDATER_ENABLED:-1}"
+XRAY_CORE_UPDATER_ON_BOOT_SEC="${XRAY_CORE_UPDATER_ON_BOOT_SEC:-45min}"
+XRAY_CORE_UPDATER_INTERVAL_SEC="${XRAY_CORE_UPDATER_INTERVAL_SEC:-1d}"
+XRAY_CORE_UPDATER_RANDOM_DELAY_SEC="${XRAY_CORE_UPDATER_RANDOM_DELAY_SEC:-43200}"
+XRAY_CORE_UPDATER_STATE_DIR="${XRAY_CORE_UPDATER_STATE_DIR:-/var/lib/vpnbot-xray-core-updater}"
+XRAY_CORE_UPDATER_EVENTS_FILE="${XRAY_CORE_UPDATER_EVENTS_FILE:-${XRAY_CORE_UPDATER_STATE_DIR}/events.jsonl}"
+XRAY_CORE_UPDATER_BACKUP_DIR="${XRAY_CORE_UPDATER_BACKUP_DIR:-${XRAY_CORE_UPDATER_STATE_DIR}/backups}"
+XRAY_CORE_UPDATER_KEEP_BACKUPS="${XRAY_CORE_UPDATER_KEEP_BACKUPS:-3}"
+XRAY_CORE_UPDATER_TIMEOUT_SECONDS="${XRAY_CORE_UPDATER_TIMEOUT_SECONDS:-45}"
 XRAY_CORE_SMOKE_ENABLE="${XRAY_CORE_SMOKE_ENABLE:-0}"
 # Keep TCP/443 free for shared production inbounds by default.
 XRAY_CORE_SMOKE_PORT="${XRAY_CORE_SMOKE_PORT:-8443}"
@@ -2681,6 +2696,63 @@ EOF
 }
 
 
+write_xray_core_updater_assets() {
+    download_node_installer_asset "assets/vpnbot_xray_core_updater.py" "${XRAY_CORE_UPDATER_SCRIPT}" 755
+    log "Installed safe Xray-core updater helper: ${XRAY_CORE_UPDATER_SCRIPT}"
+
+    mkdir -p "${XRAY_CORE_UPDATER_STATE_DIR}" "${XRAY_CORE_UPDATER_BACKUP_DIR}"
+
+    cat > "${XRAY_CORE_UPDATER_SERVICE_FILE}" <<EOF
+[Unit]
+Description=Safe VPnBot Xray-core update
+After=network-online.target ${XRAY_CORE_SERVICE_NAME}
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=XRAY_CORE_BIN=${XRAY_CORE_BIN}
+Environment=XRAY_CORE_CONFIG_DIR=${XRAY_CORE_CONFIG_DIR}
+Environment=XRAY_CORE_SHARE_DIR=${XRAY_CORE_SHARE_DIR}
+Environment=XRAY_CORE_SERVICE_NAME=${XRAY_CORE_SERVICE_NAME}
+Environment=XRAY_CORE_RELEASES_API_URL=${XRAY_CORE_RELEASES_API_URL}
+Environment=XRAY_CORE_LATEST_DOWNLOAD_BASE=${XRAY_CORE_LATEST_DOWNLOAD_BASE}
+Environment=XRAY_CORE_LATEST_RELEASE_URL=${XRAY_CORE_LATEST_RELEASE_URL}
+Environment=XRAY_CORE_RELEASE_CHANNEL=${XRAY_CORE_RELEASE_CHANNEL}
+Environment=XRAY_CORE_VERSION=${XRAY_CORE_VERSION}
+Environment=XRAY_CORE_UPDATER_STATE_DIR=${XRAY_CORE_UPDATER_STATE_DIR}
+Environment=XRAY_CORE_UPDATER_EVENTS_FILE=${XRAY_CORE_UPDATER_EVENTS_FILE}
+Environment=XRAY_CORE_UPDATER_BACKUP_DIR=${XRAY_CORE_UPDATER_BACKUP_DIR}
+Environment=XRAY_CORE_UPDATER_KEEP_BACKUPS=${XRAY_CORE_UPDATER_KEEP_BACKUPS}
+Environment=XRAY_CORE_UPDATER_TIMEOUT_SECONDS=${XRAY_CORE_UPDATER_TIMEOUT_SECONDS}
+ExecStart=${XRAY_CORE_UPDATER_SCRIPT}
+EOF
+
+    cat > "${XRAY_CORE_UPDATER_TIMER_FILE}" <<EOF
+[Unit]
+Description=Daily safe VPnBot Xray-core update check
+
+[Timer]
+OnBootSec=${XRAY_CORE_UPDATER_ON_BOOT_SEC}
+OnUnitActiveSec=${XRAY_CORE_UPDATER_INTERVAL_SEC}
+RandomizedDelaySec=${XRAY_CORE_UPDATER_RANDOM_DELAY_SEC}
+Persistent=true
+Unit=${XRAY_CORE_UPDATER_SERVICE_NAME}
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    if [ "${XRAY_CORE_UPDATER_ENABLED}" = "1" ]; then
+        systemctl enable --now "$(basename "${XRAY_CORE_UPDATER_TIMER_FILE}")" >/dev/null
+        log "Installed Xray-core auto-update timer: $(basename "${XRAY_CORE_UPDATER_TIMER_FILE}"), interval=${XRAY_CORE_UPDATER_INTERVAL_SEC}, random_delay=${XRAY_CORE_UPDATER_RANDOM_DELAY_SEC}s"
+    else
+        systemctl disable --now "$(basename "${XRAY_CORE_UPDATER_TIMER_FILE}")" >/dev/null 2>&1 || true
+        log "XRAY_CORE_UPDATER_ENABLED=0: updater installed but timer disabled"
+    fi
+}
+
+
 install_standalone_xray_core() {
     local archive_name tmp_dir zip_path extract_dir
     local asset_url="" release_tag=""
@@ -3455,6 +3527,13 @@ write_xray_core_installer_state() {
     XRAY_CONN_GUARD_SCAN_MAX_ROWS_VALUE="${XRAY_CONN_GUARD_SCAN_MAX_ROWS}" \
     XRAY_SOCKET_OVERLOAD_WARN_ROWS_VALUE="${XRAY_SOCKET_OVERLOAD_WARN_ROWS}" \
     XRAY_SOCKET_OVERLOAD_CONSECUTIVE_VALUE="${XRAY_SOCKET_OVERLOAD_CONSECUTIVE}" \
+    XRAY_CORE_UPDATER_SCRIPT_VALUE="${XRAY_CORE_UPDATER_SCRIPT}" \
+    XRAY_CORE_UPDATER_SERVICE_NAME_VALUE="${XRAY_CORE_UPDATER_SERVICE_NAME}" \
+    XRAY_CORE_UPDATER_ENABLED_VALUE="${XRAY_CORE_UPDATER_ENABLED}" \
+    XRAY_CORE_UPDATER_INTERVAL_SEC_VALUE="${XRAY_CORE_UPDATER_INTERVAL_SEC}" \
+    XRAY_CORE_UPDATER_RANDOM_DELAY_SEC_VALUE="${XRAY_CORE_UPDATER_RANDOM_DELAY_SEC}" \
+    XRAY_CORE_UPDATER_EVENTS_FILE_VALUE="${XRAY_CORE_UPDATER_EVENTS_FILE}" \
+    XRAY_CORE_UPDATER_BACKUP_DIR_VALUE="${XRAY_CORE_UPDATER_BACKUP_DIR}" \
     XRAY_CORE_VERSION_VALUE="${XRAY_CORE_INSTALLED_VERSION}" \
     XRAY_CORE_PUBLIC_ENDPOINT_VALUE="${XRAY_CORE_PUBLIC_ENDPOINT}" \
     APP_DOMAIN_VALUE="${APP_DOMAIN}" \
@@ -3543,6 +3622,15 @@ payload = {
         "scan_max_rows": int(os.environ["XRAY_CONN_GUARD_SCAN_MAX_ROWS_VALUE"]),
         "socket_overload_warn_rows": int(os.environ["XRAY_SOCKET_OVERLOAD_WARN_ROWS_VALUE"]),
         "socket_overload_consecutive": int(os.environ["XRAY_SOCKET_OVERLOAD_CONSECUTIVE_VALUE"]),
+    },
+    "auto_updater": {
+        "script": os.environ["XRAY_CORE_UPDATER_SCRIPT_VALUE"],
+        "service_name": os.environ["XRAY_CORE_UPDATER_SERVICE_NAME_VALUE"],
+        "enabled": parse_bool(os.environ.get("XRAY_CORE_UPDATER_ENABLED_VALUE")),
+        "interval": os.environ["XRAY_CORE_UPDATER_INTERVAL_SEC_VALUE"],
+        "random_delay_seconds": int(os.environ["XRAY_CORE_UPDATER_RANDOM_DELAY_SEC_VALUE"]),
+        "events_file": os.environ["XRAY_CORE_UPDATER_EVENTS_FILE_VALUE"],
+        "backup_dir": os.environ["XRAY_CORE_UPDATER_BACKUP_DIR_VALUE"],
     },
     "xray_version": os.environ["XRAY_CORE_VERSION_VALUE"],
     "public_endpoint": os.environ["XRAY_CORE_PUBLIC_ENDPOINT_VALUE"],
@@ -4551,6 +4639,7 @@ main() {
         write_xray_online_tracker_assets
         write_xray_conn_guard_assets
         write_node_watchdog_assets
+        write_xray_core_updater_assets
         ensure_nginx_layout
         ensure_bootstrap_tls_cert
         write_nginx_http_site
