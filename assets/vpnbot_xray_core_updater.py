@@ -346,9 +346,18 @@ def restart_xray(settings: Settings) -> None:
     result = run_command(["systemctl", "restart", settings.service_name], timeout=settings.timeout_seconds)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"systemctl restart {settings.service_name} failed")
-    active = run_command(["systemctl", "is-active", "--quiet", settings.service_name], timeout=settings.timeout_seconds)
-    if active.returncode != 0:
-        raise RuntimeError(f"{settings.service_name} is not active after restart")
+    attempts = max(1, min(12, settings.timeout_seconds // 2 or 1))
+    last_state = ""
+    for attempt in range(attempts):
+        active = run_command(["systemctl", "is-active", settings.service_name], timeout=settings.timeout_seconds)
+        last_state = (active.stdout or active.stderr or "").strip()
+        if active.returncode == 0 and last_state == "active":
+            return
+        if last_state in {"failed", "inactive"}:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(2)
+    raise RuntimeError(f"{settings.service_name} is not active after restart: state={last_state or '<unknown>'}")
 
 
 def run_update(settings: Settings, *, check_only: bool = False, force: bool = False) -> int:

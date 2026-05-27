@@ -104,6 +104,34 @@ class XrayCoreUpdaterTests(unittest.TestCase):
 
             self.assertEqual(settings.xray_bin.read_text(encoding="utf-8"), "new")
 
+    def test_restart_xray_rejects_restart_loop_activating_state(self):
+        updater = self.require_updater()
+        settings = updater.Settings(
+            xray_bin=Path("/opt/vpnbot/xray-core/bin/xray"),
+            config_dir=Path("/opt/vpnbot/xray-core/config"),
+            share_dir=Path("/opt/vpnbot/xray-core/share"),
+            service_name="vpnbot-xray.service",
+            releases_api_url="https://api.example/releases",
+            latest_download_base="https://github.example/releases/latest/download",
+            latest_release_url="https://github.example/releases/latest",
+            release_channel="stable",
+            target_version="latest",
+            state_dir=Path("/tmp/state"),
+            events_file=Path("/tmp/state/events.jsonl"),
+            backup_dir=Path("/tmp/state/backups"),
+            keep_backups=3,
+            timeout_seconds=1,
+        )
+
+        responses = [
+            mock.Mock(returncode=0, stdout="", stderr=""),
+            mock.Mock(returncode=0, stdout="activating\n", stderr=""),
+        ]
+
+        with mock.patch.object(updater.time, "sleep"), mock.patch.object(updater, "run_command", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "not active"):
+                updater.restart_xray(settings)
+
 
 if __name__ == "__main__":
     unittest.main()
