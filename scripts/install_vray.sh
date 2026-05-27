@@ -215,6 +215,7 @@ XRAY_SYNC_SERVICE="${XRAY_SYNC_SERVICE:-/etc/systemd/system/vpnbot-xray-sync-rou
 XRAY_SYNC_PATH="${XRAY_SYNC_PATH:-/etc/systemd/system/vpnbot-xray-sync-routes.path}"
 XRAY_SYNC_TIMER="${XRAY_SYNC_TIMER:-/etc/systemd/system/vpnbot-xray-sync-routes.timer}"
 XRAY_SYNC_STATE_DIR="${XRAY_SYNC_STATE_DIR:-/var/lib/vpnbot-xray-sync}"
+XRAY_SYNC_PATH_ENABLED="${XRAY_SYNC_PATH_ENABLED:-0}"
 XRAY_CORE_RELEASE_CHANNEL="${XRAY_CORE_RELEASE_CHANNEL:-stable}"
 XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-latest}"
 XRAY_CORE_RELEASES_API_URL="${XRAY_CORE_RELEASES_API_URL:-https://api.github.com/repos/XTLS/Xray-core/releases}"
@@ -3994,11 +3995,20 @@ LIST
 enable_sync() {
     systemctl daemon-reload
     if is_xray_core_backend; then
-        systemctl enable --now vpnbot-xray-sync-routes.path
+        systemctl disable --now vpnbot-xui-sync-routes.path vpnbot-xui-sync-routes.timer >/dev/null 2>&1 || true
+        systemctl reset-failed vpnbot-xui-sync-routes.path vpnbot-xui-sync-routes.timer vpnbot-xui-sync-routes.service >/dev/null 2>&1 || true
+        if [[ "${XRAY_SYNC_PATH_ENABLED}" == "1" ]]; then
+            systemctl enable --now vpnbot-xray-sync-routes.path
+        else
+            systemctl disable --now vpnbot-xray-sync-routes.path >/dev/null 2>&1 || true
+            systemctl reset-failed vpnbot-xray-sync-routes.path >/dev/null 2>&1 || true
+        fi
         systemctl enable --now vpnbot-xray-sync-routes.timer
         systemctl start vpnbot-xray-sync-routes.service
         return 0
     fi
+    systemctl disable --now vpnbot-xray-sync-routes.path vpnbot-xray-sync-routes.timer >/dev/null 2>&1 || true
+    systemctl reset-failed vpnbot-xray-sync-routes.path vpnbot-xray-sync-routes.timer vpnbot-xray-sync-routes.service >/dev/null 2>&1 || true
     systemctl enable --now vpnbot-xui-sync-routes.path
     systemctl enable --now vpnbot-xui-sync-routes.timer
     systemctl start vpnbot-xui-sync-routes.service
