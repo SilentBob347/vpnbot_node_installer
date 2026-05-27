@@ -1,5 +1,9 @@
 import unittest
 import importlib
+import shutil
+import tempfile
+from pathlib import Path
+from unittest import mock
 
 
 def load_updater_module():
@@ -58,6 +62,47 @@ class XrayCoreUpdaterTests(unittest.TestCase):
         url = "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip"
 
         self.assertEqual(updater.release_tag_from_download_url(url), "v26.3.27")
+
+    def test_install_candidate_replaces_running_binary_atomically(self):
+        updater = self.require_updater()
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            extract_dir = tmp / "extract"
+            bin_dir = tmp / "bin"
+            share_dir = tmp / "share"
+            state_dir = tmp / "state"
+            extract_dir.mkdir()
+            bin_dir.mkdir()
+            share_dir.mkdir()
+            (extract_dir / "xray").write_text("new", encoding="utf-8")
+            (bin_dir / "xray").write_text("old", encoding="utf-8")
+            settings = updater.Settings(
+                xray_bin=bin_dir / "xray",
+                config_dir=tmp / "config",
+                share_dir=share_dir,
+                service_name="vpnbot-xray.service",
+                releases_api_url="https://api.example/releases",
+                latest_download_base="https://github.example/releases/latest/download",
+                latest_release_url="https://github.example/releases/latest",
+                release_channel="stable",
+                target_version="latest",
+                state_dir=state_dir,
+                events_file=state_dir / "events.jsonl",
+                backup_dir=state_dir / "backups",
+                keep_backups=3,
+                timeout_seconds=5,
+            )
+            real_copy2 = shutil.copy2
+
+            def guarded_copy(src, dst, *args, **kwargs):
+                self.assertNotEqual(Path(dst), settings.xray_bin, "running binary must not be overwritten directly")
+                return real_copy2(src, dst, *args, **kwargs)
+
+            with mock.patch.object(updater.shutil, "copy2", side_effect=guarded_copy):
+                updater.install_candidate(extract_dir, settings)
+
+            self.assertEqual(settings.xray_bin.read_text(encoding="utf-8"), "new")
 
 
 if __name__ == "__main__":

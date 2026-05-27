@@ -293,6 +293,19 @@ def copy_if_exists(src: Path, dst: Path, mode: int | None = None) -> None:
         dst.chmod(mode)
 
 
+def replace_file_atomic(src: Path, dst: Path, mode: int) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.name}.", suffix=".new", dir=str(dst.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        shutil.copy2(src, tmp_path)
+        tmp_path.chmod(mode)
+        os.replace(tmp_path, dst)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def create_backup(settings: Settings, current_version: str) -> Path:
     backup = settings.backup_dir / time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     backup.mkdir(parents=True, exist_ok=False)
@@ -317,14 +330,14 @@ def prune_backups(settings: Settings) -> None:
 def install_candidate(extract_dir: Path, settings: Settings) -> None:
     settings.xray_bin.parent.mkdir(parents=True, exist_ok=True)
     settings.share_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(extract_dir / "xray", settings.xray_bin)
-    settings.xray_bin.chmod(0o755)
+    replace_file_atomic(extract_dir / "xray", settings.xray_bin, 0o755)
     copy_if_exists(extract_dir / "geoip.dat", settings.share_dir / "geoip.dat", 0o644)
     copy_if_exists(extract_dir / "geosite.dat", settings.share_dir / "geosite.dat", 0o644)
 
 
 def restore_backup(backup: Path, settings: Settings) -> None:
-    copy_if_exists(backup / "xray", settings.xray_bin, 0o755)
+    if (backup / "xray").exists():
+        replace_file_atomic(backup / "xray", settings.xray_bin, 0o755)
     copy_if_exists(backup / "geoip.dat", settings.share_dir / "geoip.dat", 0o644)
     copy_if_exists(backup / "geosite.dat", settings.share_dir / "geosite.dat", 0o644)
 
