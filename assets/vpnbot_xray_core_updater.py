@@ -52,6 +52,12 @@ class Settings:
     timeout_seconds: int
 
 
+@dataclasses.dataclass(frozen=True)
+class ConfigMigrationResult:
+    changed_files: list[Path]
+    backup_files: list[Path]
+
+
 def env(name: str, default: str) -> str:
     return str(os.environ.get(name, default)).strip()
 
@@ -284,6 +290,80 @@ def validate_candidate(candidate_bin: Path, settings: Settings, asset_dir: Path)
         )
 
 
+def _first_string(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def _migrate_tls_verify_fields_in_obj(obj: Any) -> bool:
+    changed = False
+    if isinstance(obj, dict):
+        if "verifyPeerCertInNames" in obj:
+            migrated = _first_string(obj.get("verifyPeerCertInNames"))
+            if migrated and not _first_string(obj.get("verifyPeerCertByName")):
+                obj["verifyPeerCertByName"] = migrated
+            obj.pop("verifyPeerCertInNames", None)
+            changed = True
+
+        if "verifyPeerCertByName" in obj and not isinstance(obj.get("verifyPeerCertByName"), str):
+            migrated = _first_string(obj.get("verifyPeerCertByName"))
+            if migrated:
+                obj["verifyPeerCertByName"] = migrated
+            else:
+                obj.pop("verifyPeerCertByName", None)
+            changed = True
+
+        for value in obj.values():
+            if _migrate_tls_verify_fields_in_obj(value):
+                changed = True
+    elif isinstance(obj, list):
+        for item in obj:
+            if _migrate_tls_verify_fields_in_obj(item):
+                changed = True
+    return changed
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".new", dir=str(path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def migrate_legacy_tls_verify_fields(config_dir: Path, *, backup: bool = True) -> ConfigMigrationResult:
+    changed_files: list[Path] = []
+    backup_files: list[Path] = []
+    if not config_dir.exists():
+        return ConfigMigrationResult(changed_files=[], backup_files=[])
+
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    for path in sorted(config_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not _migrate_tls_verify_fields_in_obj(payload):
+            continue
+        if backup:
+            backup_path = path.with_name(f"{path.name}.before-verifyPeerCertByName-{stamp}")
+            shutil.copy2(path, backup_path)
+            backup_files.append(backup_path)
+        _write_json_atomic(path, payload)
+        changed_files.append(path)
+
+    return ConfigMigrationResult(changed_files=changed_files, backup_files=backup_files)
+
+
 def copy_if_exists(src: Path, dst: Path, mode: int | None = None) -> None:
     if not src.exists():
         return
@@ -342,6 +422,12 @@ def restore_backup(backup: Path, settings: Settings) -> None:
     copy_if_exists(backup / "geosite.dat", settings.share_dir / "geosite.dat", 0o644)
 
 
+def restore_config_migration(result: ConfigMigrationResult) -> None:
+    for changed, backup_path in zip(result.changed_files, result.backup_files):
+        if backup_path.exists():
+            shutil.copy2(backup_path, changed)
+
+
 def restart_xray(settings: Settings) -> None:
     result = run_command(["systemctl", "restart", settings.service_name], timeout=settings.timeout_seconds)
     if result.returncode != 0:
@@ -388,7 +474,12 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
                 download_file(release.digest_url, digest_path, settings.timeout_seconds)
                 verify_digest(archive_path, digest_path)
             extract_archive(archive_path, extract_dir)
-            validate_candidate(extract_dir / "xray", settings, extract_dir)
+            migration = migrate_legacy_tls_verify_fields(settings.config_dir, backup=True)
+            try:
+                validate_candidate(extract_dir / "xray", settings, extract_dir)
+            except Exception:
+                restore_config_migration(migration)
+                raise
             backup = create_backup(settings, current)
             try:
                 install_candidate(extract_dir, settings)
@@ -417,18 +508,46 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
                 target_version=release.tag,
                 installed_version=installed,
                 backup=str(backup),
+                migrated_config_files=[str(path) for path in migration.changed_files],
             )
             print(f"Xray-core updated: previous={current or '<unknown>'} target={release.tag} installed={installed}")
             return 0
+
+
+def run_config_migration_only(settings: Settings) -> int:
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    result = migrate_legacy_tls_verify_fields(settings.config_dir, backup=True)
+    emit_event(
+        settings,
+        "config_migrated",
+        changed_files=[str(path) for path in result.changed_files],
+        backup_files=[str(path) for path in result.backup_files],
+    )
+    if not result.changed_files:
+        print("Xray config migration: no legacy verifyPeerCertInNames fields found")
+        return 0
+    print(
+        "Xray config migration: updated "
+        + ", ".join(str(path) for path in result.changed_files)
+        + "; restart is not required for running processes"
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Safely update standalone VPnBot Xray-core")
     parser.add_argument("--check-only", action="store_true", help="report whether a newer release exists without installing")
     parser.add_argument("--force", action="store_true", help="install the resolved release even when versions match")
+    parser.add_argument(
+        "--migrate-config-only",
+        action="store_true",
+        help="migrate legacy Xray JSON fields without installing or restarting Xray",
+    )
     args = parser.parse_args(argv)
     settings = load_settings()
     try:
+        if args.migrate_config_only:
+            return run_config_migration_only(settings)
         return run_update(settings, check_only=args.check_only, force=args.force)
     except BlockingIOError:
         print("Another Xray-core updater run is already active", file=sys.stderr)

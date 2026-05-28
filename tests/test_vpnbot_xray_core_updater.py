@@ -132,6 +132,69 @@ class XrayCoreUpdaterTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not active"):
                 updater.restart_xray(settings)
 
+    def test_migrates_removed_verify_peer_cert_names_field(self):
+        updater = self.require_updater()
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            config_dir = Path(raw_tmp)
+            config_path = config_dir / "50_vpnbot_managed_inbounds.json"
+            config_path.write_text(
+                """
+                {
+                  "inbounds": [
+                    {
+                      "streamSettings": {
+                        "security": "tls",
+                        "tlsSettings": {
+                          "verifyPeerCertInNames": ["dns.google", "cloudflare-dns.com"]
+                        }
+                      }
+                    }
+                  ]
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            result = updater.migrate_legacy_tls_verify_fields(config_dir, backup=False)
+
+            self.assertEqual(result.changed_files, [config_path])
+            data = updater.json.loads(config_path.read_text(encoding="utf-8"))
+            tls = data["inbounds"][0]["streamSettings"]["tlsSettings"]
+            self.assertNotIn("verifyPeerCertInNames", tls)
+            self.assertEqual(tls["verifyPeerCertByName"], "dns.google")
+
+    def test_migrates_verify_peer_cert_by_name_array_to_string(self):
+        updater = self.require_updater()
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            config_dir = Path(raw_tmp)
+            config_path = config_dir / "50_vpnbot_managed_inbounds.json"
+            config_path.write_text(
+                """
+                {
+                  "inbounds": [
+                    {
+                      "streamSettings": {
+                        "security": "tls",
+                        "tlsSettings": {
+                          "verifyPeerCertByName": ["dns.google"]
+                        }
+                      }
+                    }
+                  ]
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            result = updater.migrate_legacy_tls_verify_fields(config_dir, backup=False)
+
+            self.assertEqual(result.changed_files, [config_path])
+            data = updater.json.loads(config_path.read_text(encoding="utf-8"))
+            tls = data["inbounds"][0]["streamSettings"]["tlsSettings"]
+            self.assertEqual(tls["verifyPeerCertByName"], "dns.google")
+
 
 if __name__ == "__main__":
     unittest.main()
