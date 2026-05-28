@@ -65,6 +65,9 @@ Reality inbound, the helper checks TLS reachability of the selected
 dead target such as a temporarily filtered local site from being saved silently.
 If the check fails, choose another SNI from the full pool. Use
 `VPNBOT_REALITY_DEST_CHECK=0` only for a manual emergency override.
+New REALITY inbounds use `fp=firefox` by default through
+`VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets keep `fp=chrome` unless
+`VPNBOT_TLS_FINGERPRINT` is overridden deliberately.
 
 Standalone Xray-core installs block proxied user egress to Russian destination
 domains/IPs by default through Xray `routing` and the `blackhole` outbound. The

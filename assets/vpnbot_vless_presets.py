@@ -25,7 +25,8 @@ DEFAULT_TLS_KEY = os.environ.get("NGINX_SSL_KEY", "/etc/nginx/ssl/vpnbot/privkey
 DEFAULT_TLS_FALLBACK_DEST = os.environ.get("VPNBOT_TLS_FALLBACK_DEST", "127.0.0.1:10445")
 PORT_MIN = 20000
 PORT_MAX = 45000
-REALITY_FINGERPRINT = "chrome"
+REALITY_FINGERPRINT = os.environ.get("VPNBOT_REALITY_FINGERPRINT", "firefox").strip() or "firefox"
+TLS_FINGERPRINT = os.environ.get("VPNBOT_TLS_FINGERPRINT", "chrome").strip() or "chrome"
 REALITY_SERVER_NAMES_SCOPE = os.environ.get("VPNBOT_REALITY_SERVER_NAMES_SCOPE", "primary").strip().lower()
 REALITY_DEST_CHECK = os.environ.get("VPNBOT_REALITY_DEST_CHECK", "1").strip().lower() not in {"0", "false", "no", "off", "нет"}
 REALITY_DEST_CHECK_TIMEOUT = float(os.environ.get("VPNBOT_REALITY_DEST_CHECK_TIMEOUT", "4"))
@@ -1040,7 +1041,7 @@ def build_xray_payload(spec: dict, rows: list[dict]) -> tuple[dict | None, str]:
             ],
             "settings": {
                 "allowInsecure": False,
-                "fingerprint": REALITY_FINGERPRINT,
+                "fingerprint": TLS_FINGERPRINT,
                 "serverName": domain,
             },
         }

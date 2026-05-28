@@ -205,6 +205,7 @@ XRAY_CORE_UPDATER_BACKUP_DIR="${XRAY_CORE_UPDATER_BACKUP_DIR:-${XRAY_CORE_UPDATE
 XRAY_CORE_UPDATER_KEEP_BACKUPS="${XRAY_CORE_UPDATER_KEEP_BACKUPS:-3}"
 XRAY_CORE_UPDATER_TIMEOUT_SECONDS="${XRAY_CORE_UPDATER_TIMEOUT_SECONDS:-45}"
 XRAY_CORE_SMOKE_ENABLE="${XRAY_CORE_SMOKE_ENABLE:-0}"
+XRAY_CORE_REALITY_FINGERPRINT="${XRAY_CORE_REALITY_FINGERPRINT:-firefox}"
 # Keep TCP/443 free for shared production inbounds by default.
 XRAY_CORE_SMOKE_PORT="${XRAY_CORE_SMOKE_PORT:-8443}"
 XRAY_CORE_SMOKE_DOMAIN="${XRAY_CORE_SMOKE_DOMAIN:-www.cloudflare.com}"
@@ -2044,7 +2045,7 @@ PY
     XRAY_CORE_SMOKE_UUID="${smoke_uuid}"
     XRAY_CORE_SMOKE_PUBLIC_KEY="${public_key}"
     XRAY_CORE_SMOKE_SHORT_ID="${short_id}"
-    XRAY_CORE_SMOKE_LINK="vless://${smoke_uuid}@${public_host}:${smoke_port}?type=tcp&security=reality&pbk=${public_key}&fp=chrome&sni=${smoke_domain}&sid=${short_id}&encryption=none#vpnbot-smoke"
+    XRAY_CORE_SMOKE_LINK="vless://${smoke_uuid}@${public_host}:${smoke_port}?type=tcp&security=reality&pbk=${public_key}&fp=${XRAY_CORE_REALITY_FINGERPRINT}&sni=${smoke_domain}&sid=${short_id}&encryption=none#vpnbot-smoke"
 
     SMOKE_UUID_VALUE="${smoke_uuid}" \
     SMOKE_PORT_VALUE="${smoke_port}" \
@@ -3423,6 +3424,7 @@ export VPNBOT_XRAY_RESERVED_PORTS_SYSCTL_FILE=${VPNBOT_XRAY_RESERVED_PORTS_SYSCT
 export NGINX_SSL_CERT=${NGINX_SSL_CERT@Q}
 export NGINX_SSL_KEY=${NGINX_SSL_KEY@Q}
 export VPNBOT_REALITY_SNI_POOL_FILE=${VPNBOT_REALITY_SNI_POOL_FILE@Q}
+export VPNBOT_REALITY_FINGERPRINT=${XRAY_CORE_REALITY_FINGERPRINT@Q}
 exec /usr/bin/env python3 ${helper_asset@Q} "\$@"
 EOF
     chmod 755 "${VPNBOT_VLESS_PRESET_HELPER}"
