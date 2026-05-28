@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 
-TRACKER_VERSION = "2026-04-28.3"
+TRACKER_VERSION = "2026-05-28.1"
 ACCESS_LOG = Path(os.environ.get("XRAY_ONLINE_ACCESS_LOG", "/opt/vpnbot/xray-core/logs/access.log"))
 MANAGED_INBOUNDS_FILE = Path(
     os.environ.get(
@@ -235,6 +235,8 @@ TRAFFIC = {
     "traffic_down_bytes": 0,
     "traffic_total_bytes": 0,
     "load_bps": None,
+    "net_io_up_bps": None,
+    "net_io_down_bps": None,
     "stats_checked_at": "",
     "stats_last_error": "",
 }
@@ -2244,21 +2246,33 @@ def poll_xray_stats_once() -> None:
 
     with LOCK:
         previous_total = int(TRAFFIC.get("traffic_total_bytes") or 0)
+        previous_up = int(TRAFFIC.get("traffic_up_bytes") or 0)
+        previous_down = int(TRAFFIC.get("traffic_down_bytes") or 0)
         previous_checked_at = float(TRAFFIC.get("_checked_at_ts") or 0.0)
         new_total = int(totals.get("traffic_total_bytes") or 0)
+        new_up = int(totals.get("traffic_up_bytes") or 0)
+        new_down = int(totals.get("traffic_down_bytes") or 0)
         load_bps = None
+        net_io_up_bps = None
+        net_io_down_bps = None
         if previous_checked_at > 0 and new_total >= previous_total:
             delta_seconds = max(0.001, now - previous_checked_at)
             if delta_seconds >= max(5.0, STATS_INTERVAL * 0.5):
-                load_bps = int(((new_total - previous_total) * 8) / delta_seconds)
+                delta_up = max(0, new_up - previous_up) if new_up >= previous_up else 0
+                delta_down = max(0, new_down - previous_down) if new_down >= previous_down else 0
+                net_io_up_bps = int((delta_up * 8) / delta_seconds)
+                net_io_down_bps = int((delta_down * 8) / delta_seconds)
+                load_bps = int(net_io_up_bps + net_io_down_bps)
 
         TRAFFIC.update(
             {
                 "traffic_source": source,
-                "traffic_up_bytes": int(totals.get("traffic_up_bytes") or 0),
-                "traffic_down_bytes": int(totals.get("traffic_down_bytes") or 0),
+                "traffic_up_bytes": new_up,
+                "traffic_down_bytes": new_down,
                 "traffic_total_bytes": new_total,
                 "load_bps": load_bps,
+                "net_io_up_bps": net_io_up_bps,
+                "net_io_down_bps": net_io_down_bps,
                 "stats_checked_at": utc_iso(now),
                 "stats_last_error": "",
                 "_checked_at_ts": now,
