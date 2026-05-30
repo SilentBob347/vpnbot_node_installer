@@ -227,6 +227,7 @@ VPNBOT_XRAY_BLOCK_RU_EGRESS="${VPNBOT_XRAY_BLOCK_RU_EGRESS:-1}"
 VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS:-domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com}"
 VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY:-1}"
 VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS:-}"
+VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS:-}"
 VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS:-}"
 VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS="${VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS:-}"
 VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE="${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE:-1}"
@@ -1586,6 +1587,7 @@ ensure_xray_core_ru_egress_block() {
     VPNBOT_XRAY_BLOCK_RU_EGRESS_VALUE="${VPNBOT_XRAY_BLOCK_RU_EGRESS}" \
     VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}" \
     VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS}" \
+    VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS}" \
     VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS_VALUE="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS}" \
     VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE_VALUE="${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE}" \
     VPNBOT_XRAY_RU_GEOSITE_FILE_VALUE="${VPNBOT_XRAY_RU_GEOSITE_FILE}" \
@@ -1713,6 +1715,45 @@ default_torrent_domains = [
     "domain:router.utorrent.com",
     "domain:dht.transmissionbt.com",
 ]
+default_torrent_ips = [
+    "93.158.213.92/32",
+    "152.231.114.227/32",
+    "113.17.67.93/32",
+    "91.216.110.53/32",
+    "185.121.168.96/32",
+    "212.60.5.95/32",
+    "212.60.5.96/32",
+    "212.60.5.99/32",
+    "180.153.120.112/32",
+    "23.157.120.14/32",
+    "157.90.33.73/32",
+    "157.90.33.74/32",
+    "5.79.104.115/32",
+    "95.211.79.57/32",
+    "89.149.222.91/32",
+    "212.7.202.58/32",
+    "37.48.92.183/32",
+    "212.7.200.122/32",
+    "37.48.81.218/32",
+    "46.4.109.148/32",
+    "123.245.62.39/32",
+    "123.245.62.80/32",
+    "211.75.210.221/32",
+    "211.75.205.187/32",
+    "211.75.205.188/32",
+    "211.75.205.189/32",
+    "60.249.37.20/32",
+    "216.144.239.90/32",
+    "107.189.2.131/32",
+    "156.234.201.18/32",
+    "107.152.127.9/32",
+    "195.16.73.95/32",
+    "186.2.165.106/32",
+    "67.215.246.10/32",
+    "82.221.103.244/32",
+    "87.98.162.88/32",
+    "212.129.33.59/32",
+]
 
 external_file = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_FILE_VALUE", "")).strip()
 external_tag = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_TAG_VALUE", "")).strip()
@@ -1723,6 +1764,7 @@ domains = default_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTR
 ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS_VALUE", ""))
 allow_domains = split_list(os.environ.get("VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS_VALUE", ""))
 torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS_VALUE", ""))
+torrent_ips = default_torrent_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS_VALUE", ""))
 
 if routing_path.exists():
     try:
@@ -1747,6 +1789,7 @@ torrent_enabled = env_enabled("VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY_VALUE", defau
 managed_tags = {
     "vpnbot-allow-ru-egress-domains",
     "vpnbot-block-torrent-peer-discovery-domains",
+    "vpnbot-block-torrent-peer-discovery-ips",
     "vpnbot-block-ru-domains",
     "vpnbot-block-ru-ips",
 }
@@ -1782,6 +1825,20 @@ if enabled or torrent_enabled:
                     "domain": torrent_domains,
                     "outboundTag": "block",
                     "ruleTag": "vpnbot-block-torrent-peer-discovery-domains",
+                },
+            )
+        )
+    if torrent_enabled and torrent_ips:
+        managed.append(
+            (
+                "vpnbot-block-torrent-peer-discovery-ips",
+                "ip",
+                torrent_ips,
+                {
+                    "type": "field",
+                    "ip": torrent_ips,
+                    "outboundTag": "block",
+                    "ruleTag": "vpnbot-block-torrent-peer-discovery-ips",
                 },
             )
         )
@@ -1830,8 +1887,12 @@ if enabled or torrent_enabled:
             if not (
                 isinstance(rule, dict)
                 and (
-                    rule.get("ruleTag") == "vpnbot-block-torrent-peer-discovery-domains"
+                    rule.get("ruleTag") in {
+                        "vpnbot-block-torrent-peer-discovery-domains",
+                        "vpnbot-block-torrent-peer-discovery-ips",
+                    }
                     or exact_legacy_rule(rule, "domain", torrent_domains)
+                    or exact_legacy_rule(rule, "ip", torrent_ips)
                 )
             )
         ]
@@ -1869,6 +1930,7 @@ else:
                 or exact_legacy_rule(rule, "domain", domains)
                 or exact_legacy_rule(rule, "domain", torrent_domains)
                 or exact_legacy_rule(rule, "ip", ips)
+                or exact_legacy_rule(rule, "ip", torrent_ips)
             )
         )
     ]
@@ -1882,7 +1944,7 @@ PY
         info "Xray Russian destination egress block is disabled by VPNBOT_XRAY_BLOCK_RU_EGRESS=${VPNBOT_XRAY_BLOCK_RU_EGRESS}"
     fi
     if env_is_true "${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}"; then
-        log "Enabled Xray routing block for torrent peer-discovery domains in ${XRAY_CORE_CONFIG_DIR}/10_routing.json"
+        log "Enabled Xray routing block for torrent peer-discovery domains/IPs in ${XRAY_CORE_CONFIG_DIR}/10_routing.json"
     else
         info "Xray torrent peer-discovery block is disabled by VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY=${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}"
     fi
@@ -3415,6 +3477,7 @@ export VPNBOT_XRAY_BLOCK_RU_EGRESS=${VPNBOT_XRAY_BLOCK_RU_EGRESS@Q}
 export VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS=${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY=${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS=${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS@Q}
+export VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS=${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS@Q}
 export VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS=${VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS@Q}
 export VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS=${VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS@Q}
 export VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE=${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE@Q}
