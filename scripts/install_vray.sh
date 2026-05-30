@@ -224,7 +224,7 @@ XRAY_POLICY_CONN_IDLE_SECONDS="${XRAY_POLICY_CONN_IDLE_SECONDS:-180}"
 XRAY_POLICY_UPLINK_ONLY_SECONDS="${XRAY_POLICY_UPLINK_ONLY_SECONDS:-8}"
 XRAY_POLICY_DOWNLINK_ONLY_SECONDS="${XRAY_POLICY_DOWNLINK_ONLY_SECONDS:-20}"
 VPNBOT_XRAY_BLOCK_RU_EGRESS="${VPNBOT_XRAY_BLOCK_RU_EGRESS:-1}"
-VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS:-domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,domain:rutracker.org,domain:rutracker.cc,domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com}"
+VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS:-domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com}"
 VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY:-1}"
 VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS:-}"
 VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS:-}"
@@ -1676,6 +1676,39 @@ default_torrent_domains = [
     "domain:9.rarbg.me",
     "domain:9.rarbg.to",
     "domain:11.rarbg.com",
+    "domain:rutracker.org",
+    "domain:rutracker.cc",
+    "domain:static.rutracker.cc",
+    "domain:ehtracker.org",
+    "domain:tracker.grepler.com",
+    "domain:tracker.seedoff.net",
+    "domain:tracker.23794.top",
+    "domain:tracker.yemekyedim.com",
+    "domain:tracker.bt4g.com",
+    "domain:trackers.run",
+    "domain:tracker.itscraftsoftware.my.id",
+    "domain:tracker1.520.jp",
+    "domain:tracker2.dler.org",
+    "domain:tracker1.itzmx.com",
+    "domain:tracker.zhuqiy.top",
+    "domain:tracker.waaa.moe",
+    "domain:tracker.renfei.net",
+    "domain:tracker.pmman.tech",
+    "domain:tracker.leechshield.link",
+    "domain:tracker.dler.org",
+    "domain:tracker.dler.com",
+    "domain:bittorrent-tracker.e-n-c-r-y-p-t.net",
+    "domain:tracker.gcrenwp.top",
+    "domain:tracker1.bt.moack.co.kr",
+    "domain:tracker.zerobytes.xyz",
+    "domain:tracker.ipv6tracker.org",
+    "domain:tracker.foreverpirates.co",
+    "domain:tracker.torrentfrancais.com",
+    "domain:torrenttracker.nwc.acsalaska.net",
+    "domain:nyaa.tracker.wf",
+    "domain:itorrents-igruha.org",
+    "domain:bittorrent.com",
+    "domain:utorrent.com",
     "domain:router.bittorrent.com",
     "domain:router.utorrent.com",
     "domain:dht.transmissionbt.com",

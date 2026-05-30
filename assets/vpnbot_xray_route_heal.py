@@ -115,6 +115,39 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
         "domain:9.rarbg.me",
         "domain:9.rarbg.to",
         "domain:11.rarbg.com",
+        "domain:rutracker.org",
+        "domain:rutracker.cc",
+        "domain:static.rutracker.cc",
+        "domain:ehtracker.org",
+        "domain:tracker.grepler.com",
+        "domain:tracker.seedoff.net",
+        "domain:tracker.23794.top",
+        "domain:tracker.yemekyedim.com",
+        "domain:tracker.bt4g.com",
+        "domain:trackers.run",
+        "domain:tracker.itscraftsoftware.my.id",
+        "domain:tracker1.520.jp",
+        "domain:tracker2.dler.org",
+        "domain:tracker1.itzmx.com",
+        "domain:tracker.zhuqiy.top",
+        "domain:tracker.waaa.moe",
+        "domain:tracker.renfei.net",
+        "domain:tracker.pmman.tech",
+        "domain:tracker.leechshield.link",
+        "domain:tracker.dler.org",
+        "domain:tracker.dler.com",
+        "domain:bittorrent-tracker.e-n-c-r-y-p-t.net",
+        "domain:tracker.gcrenwp.top",
+        "domain:tracker1.bt.moack.co.kr",
+        "domain:tracker.zerobytes.xyz",
+        "domain:tracker.ipv6tracker.org",
+        "domain:tracker.foreverpirates.co",
+        "domain:tracker.torrentfrancais.com",
+        "domain:torrenttracker.nwc.acsalaska.net",
+        "domain:nyaa.tracker.wf",
+        "domain:itorrents-igruha.org",
+        "domain:bittorrent.com",
+        "domain:utorrent.com",
         "domain:router.bittorrent.com",
         "domain:router.utorrent.com",
         "domain:dht.transmissionbt.com",
@@ -135,7 +168,7 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
             "domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,"
             "domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,"
             "domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,"
-            "domain:rutracker.org,domain:rutracker.cc,domain:lordfilm.ru,domain:lordfilm.com,"
+            "domain:lordfilm.ru,domain:lordfilm.com,"
             "domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,"
             "domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,"
             "domain:majestic-rp.ru,domain:majestic-launcher.ru,"
