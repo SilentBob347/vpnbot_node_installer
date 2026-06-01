@@ -22,9 +22,11 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn("Description=Safe VPnBot Xray-core update", self.text)
         self.assertIn("RandomizedDelaySec=${XRAY_CORE_UPDATER_RANDOM_DELAY_SEC}", self.text)
 
-    def test_xray_core_auto_update_timer_is_disabled_by_default(self):
-        self.assertIn('XRAY_CORE_UPDATER_ENABLED="${XRAY_CORE_UPDATER_ENABLED:-0}"', self.text)
-        self.assertIn("XRAY_CORE_UPDATER_ENABLED=0: updater installed but timer disabled", self.text)
+    def test_xray_core_stable_auto_update_timer_is_enabled_by_default(self):
+        self.assertIn('XRAY_CORE_RELEASE_CHANNEL="${XRAY_CORE_RELEASE_CHANNEL:-stable}"', self.text)
+        self.assertIn('XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-latest}"', self.text)
+        self.assertIn('XRAY_CORE_UPDATER_ENABLED="${XRAY_CORE_UPDATER_ENABLED:-1}"', self.text)
+        self.assertIn("Installed Xray-core auto-update timer:", self.text)
 
     def test_xray_core_main_path_installs_updater(self):
         main_start = self.text.rindex("main() {")
