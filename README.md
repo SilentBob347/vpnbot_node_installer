@@ -66,7 +66,7 @@ dead target such as a temporarily filtered local site from being saved silently.
 If the check fails, choose another SNI from the full pool. Use
 `VPNBOT_REALITY_DEST_CHECK=0` only for a manual emergency override.
 New REALITY inbounds use `fp=edge` by default through
-`VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets keep `fp=chrome` unless
+`VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets use `fp=edge` unless
 `VPNBOT_TLS_FINGERPRINT` is overridden deliberately.
 
 Standalone Xray-core installs block proxied user egress to Russian destination
