@@ -110,10 +110,28 @@ def normalize_version(value: str) -> str:
     return match.group(1) if match else ""
 
 
+def version_number_parts(value: str) -> tuple[int, ...]:
+    normalized = normalize_version(value)
+    if not normalized:
+        return ()
+    numeric = re.match(r"(\d+(?:\.\d+)*)", normalized)
+    if not numeric:
+        return ()
+    return tuple(int(part) for part in numeric.group(1).split("."))
+
+
 def is_update_needed(current_version: str, target_version: str) -> bool:
     current = normalize_version(current_version)
     target = normalize_version(target_version)
-    return not current or not target or current != target
+    if not current or not target:
+        return True
+    current_parts = version_number_parts(current)
+    target_parts = version_number_parts(target)
+    if current_parts and target_parts:
+        return current_parts < target_parts
+    return current != target
+
+
 
 
 def request_json(url: str, timeout: int = 30) -> Any:
@@ -366,6 +384,9 @@ def migrate_legacy_tls_fields(config_dir: Path, *, backup: bool = True) -> Confi
         changed_files.append(path)
 
     return ConfigMigrationResult(changed_files=changed_files, backup_files=backup_files)
+
+
+migrate_legacy_tls_verify_fields = migrate_legacy_tls_fields
 
 
 def copy_if_exists(src: Path, dst: Path, mode: int | None = None) -> None:

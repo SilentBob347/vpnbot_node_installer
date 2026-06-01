@@ -56,6 +56,12 @@ class XrayCoreUpdaterTests(unittest.TestCase):
         self.assertTrue(updater.is_update_needed("Xray 26.1.18 (Xray)", "v26.3.27"))
         self.assertTrue(updater.is_update_needed("", "v26.3.27"))
 
+    def test_update_needed_does_not_downgrade_newer_manual_release(self):
+        updater = self.require_updater()
+
+        self.assertFalse(updater.is_update_needed("Xray 26.6.1 (Xray)", "v26.3.27"))
+        self.assertFalse(updater.is_update_needed("Xray 27.0.0 (Xray)", "v26.6.1"))
+
     def test_release_tag_is_parsed_from_github_download_redirect(self):
         updater = self.require_updater()
 
