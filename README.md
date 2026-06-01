@@ -65,7 +65,7 @@ Reality inbound, the helper checks TLS reachability of the selected
 dead target such as a temporarily filtered local site from being saved silently.
 If the check fails, choose another SNI from the full pool. Use
 `VPNBOT_REALITY_DEST_CHECK=0` only for a manual emergency override.
-New REALITY inbounds use `fp=firefox` by default through
+New REALITY inbounds use `fp=edge` by default through
 `VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets keep `fp=chrome` unless
 `VPNBOT_TLS_FINGERPRINT` is overridden deliberately.
 
