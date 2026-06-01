@@ -301,9 +301,13 @@ def _first_string(value: Any) -> str:
     return ""
 
 
-def _migrate_tls_verify_fields_in_obj(obj: Any) -> bool:
+def _migrate_tls_fields_in_obj(obj: Any) -> bool:
     changed = False
     if isinstance(obj, dict):
+        if "allowInsecure" in obj:
+            obj.pop("allowInsecure", None)
+            changed = True
+
         if "verifyPeerCertInNames" in obj:
             migrated = _first_string(obj.get("verifyPeerCertInNames"))
             if migrated and not _first_string(obj.get("verifyPeerCertByName")):
@@ -320,11 +324,11 @@ def _migrate_tls_verify_fields_in_obj(obj: Any) -> bool:
             changed = True
 
         for value in obj.values():
-            if _migrate_tls_verify_fields_in_obj(value):
+            if _migrate_tls_fields_in_obj(value):
                 changed = True
     elif isinstance(obj, list):
         for item in obj:
-            if _migrate_tls_verify_fields_in_obj(item):
+            if _migrate_tls_fields_in_obj(item):
                 changed = True
     return changed
 
@@ -340,7 +344,7 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-def migrate_legacy_tls_verify_fields(config_dir: Path, *, backup: bool = True) -> ConfigMigrationResult:
+def migrate_legacy_tls_fields(config_dir: Path, *, backup: bool = True) -> ConfigMigrationResult:
     changed_files: list[Path] = []
     backup_files: list[Path] = []
     if not config_dir.exists():
@@ -352,10 +356,10 @@ def migrate_legacy_tls_verify_fields(config_dir: Path, *, backup: bool = True) -
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        if not _migrate_tls_verify_fields_in_obj(payload):
+        if not _migrate_tls_fields_in_obj(payload):
             continue
         if backup:
-            backup_path = path.with_name(f"{path.name}.before-verifyPeerCertByName-{stamp}")
+            backup_path = path.with_name(f"{path.name}.before-tls-field-migration-{stamp}")
             shutil.copy2(path, backup_path)
             backup_files.append(backup_path)
         _write_json_atomic(path, payload)
@@ -474,7 +478,7 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
                 download_file(release.digest_url, digest_path, settings.timeout_seconds)
                 verify_digest(archive_path, digest_path)
             extract_archive(archive_path, extract_dir)
-            migration = migrate_legacy_tls_verify_fields(settings.config_dir, backup=True)
+            migration = migrate_legacy_tls_fields(settings.config_dir, backup=True)
             try:
                 validate_candidate(extract_dir / "xray", settings, extract_dir)
             except Exception:
@@ -516,7 +520,7 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
 
 def run_config_migration_only(settings: Settings) -> int:
     settings.state_dir.mkdir(parents=True, exist_ok=True)
-    result = migrate_legacy_tls_verify_fields(settings.config_dir, backup=True)
+    result = migrate_legacy_tls_fields(settings.config_dir, backup=True)
     emit_event(
         settings,
         "config_migrated",
@@ -524,7 +528,7 @@ def run_config_migration_only(settings: Settings) -> int:
         backup_files=[str(path) for path in result.backup_files],
     )
     if not result.changed_files:
-        print("Xray config migration: no legacy verifyPeerCertInNames fields found")
+        print("Xray config migration: no retired TLS fields found")
         return 0
     print(
         "Xray config migration: updated "

@@ -68,6 +68,10 @@ If the check fails, choose another SNI from the full pool. Use
 New REALITY inbounds use `fp=edge` by default through
 `VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets use `fp=edge` unless
 `VPNBOT_TLS_FINGERPRINT` is overridden deliberately.
+Do not emit `allowInsecure` in generated links or JSON. It was only a temporary
+workaround for installer-managed self-signed TLS fallback certificates; modern
+Xray-core rejects it after 2026-06-01, so certificate issuance/retry must be
+fixed instead.
 
 Standalone Xray-core installs block proxied user egress to Russian destination
 domains/IPs by default through Xray `routing` and the `blackhole` outbound. The
