@@ -997,6 +997,8 @@ def build_xray_payload(spec: dict, rows: list[dict]) -> tuple[dict | None, str]:
     }
     if use_proxy_protocol:
         stream_settings["sockopt"] = {"acceptProxyProtocol": True}
+    if network in {"xhttp", "ws", "splithttp", "websocket", "httpupgrade"}:
+        stream_settings.setdefault("sockopt", {})["trustedXForwardedFor"] = ["X-Forwarded-For"]
 
     if security == "reality":
         reality_dest = require_reality_dest_reachable(domain)

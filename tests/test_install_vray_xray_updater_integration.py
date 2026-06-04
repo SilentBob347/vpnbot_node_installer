@@ -67,6 +67,11 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         ]:
             self.assertNotIn(needle, helper)
 
+    def test_http_like_inbounds_set_trusted_x_forwarded_for(self):
+        helper = (REPO_ROOT / "assets" / "vpnbot_vless_presets.py").read_text(encoding="utf-8")
+        self.assertIn('network in {"xhttp", "ws", "splithttp", "websocket", "httpupgrade"}', helper)
+        self.assertIn('"trustedXForwardedFor"] = ["X-Forwarded-For"]', helper)
+
 
 if __name__ == "__main__":
     unittest.main()
