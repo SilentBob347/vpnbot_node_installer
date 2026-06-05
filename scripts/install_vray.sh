@@ -56,6 +56,7 @@ NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-}"
 NGINX_PANEL_LOCATION="${NGINX_PANEL_LOCATION:-}"
 NGINX_SSL_CERT="${NGINX_SSL_CERT:-/etc/nginx/ssl/vpnbot/fullchain.pem}"
 NGINX_SSL_KEY="${NGINX_SSL_KEY:-/etc/nginx/ssl/vpnbot/privkey.pem}"
+VPNBOT_OBSERVED_SCANNER_CIDRS="${VPNBOT_OBSERVED_SCANNER_CIDRS:-85.142.100.0/24 212.192.158.0/24}"
 VPNBOT_INSTALLER_DEFAULTS_FILE="${VPNBOT_INSTALLER_DEFAULTS_FILE:-/etc/vpnbot-xray-defaults.env}"
 VPNBOT_VLESS_PRESET_HELPER="${VPNBOT_VLESS_PRESET_HELPER:-/usr/local/bin/vpnbot-vless-presets}"
 VPNBOT_ASSET_LIB_DIR="${VPNBOT_ASSET_LIB_DIR:-/usr/local/lib/vpnbot}"
@@ -3037,6 +3038,8 @@ issue_or_create_cert() {
 write_nginx_http_site() {
     local http2_listen_suffix=" http2"
     local http2_directive=""
+    local observed_scanner_geo_entries="    default 0;"
+    local observed_scanner_cidr
 
     local nginx_version
     nginx_version="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')"
@@ -3057,7 +3060,20 @@ PY
         http2_directive="    http2 on;"
     fi
 
+    for observed_scanner_cidr in ${VPNBOT_OBSERVED_SCANNER_CIDRS//,/ }; do
+        if [[ "${observed_scanner_cidr}" =~ ^[0-9A-Fa-f:.]+(/[0-9]+)?$ ]]; then
+            observed_scanner_geo_entries="${observed_scanner_geo_entries}
+    ${observed_scanner_cidr} 1;"
+        else
+            warn "Skipping invalid observed scanner CIDR for nginx camouflage: ${observed_scanner_cidr}"
+        fi
+    done
+
     cat > "${NGINX_HTTP_SITE_FILE}" <<EOF
+geo \$vpnbot_observed_scanner {
+${observed_scanner_geo_entries}
+}
+
 server {
     listen 80;
     server_name ${NGINX_SERVER_NAME};
@@ -3080,6 +3096,35 @@ ${http2_directive}
     ssl_prefer_server_ciphers off;
     client_max_body_size 50m;
 
+    error_page 418 = @vpnbot_scanner_camouflage;
+    if (\$vpnbot_observed_scanner) {
+        return 418;
+    }
+
+    location @vpnbot_scanner_camouflage {
+        default_type text/html;
+        return 200 '<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Технические работы</title>
+  <style>
+    body{margin:0;font-family:Arial,sans-serif;background:#f6f7f9;color:#222}
+    main{max-width:720px;margin:14vh auto;padding:32px}
+    h1{margin:0 0 16px;font-size:28px;font-weight:600}
+    p{font-size:16px;line-height:1.55;color:#555}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Технические работы</h1>
+    <p>Сайт временно недоступен. Пожалуйста, повторите запрос позже.</p>
+  </main>
+</body>
+</html>';
+    }
+
     # Dynamic shared HTTP routes are generated here.
 
     include ${NGINX_HTTP_LOCATION_DIR}/*.conf;
@@ -3091,20 +3136,18 @@ ${http2_directive}
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Service Portal</title>
+  <title>Технические работы</title>
   <style>
-    body{margin:0;font-family:Verdana,Arial,sans-serif;background:#f5f7fb;color:#1f2937}
-    .wrap{max-width:760px;margin:12vh auto;padding:40px;background:white;border-radius:18px;box-shadow:0 12px 40px rgba(31,41,55,.12)}
-    h1{margin:0 0 14px;font-size:32px;font-weight:700}
-    p{font-size:16px;line-height:1.55;color:#4b5563}
-    .muted{margin-top:28px;font-size:13px;color:#9ca3af}
+    body{margin:0;font-family:Arial,sans-serif;background:#f6f7f9;color:#222}
+    main{max-width:720px;margin:14vh auto;padding:32px}
+    h1{margin:0 0 16px;font-size:28px;font-weight:600}
+    p{font-size:16px;line-height:1.55;color:#555}
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <h1>Service Portal</h1>
-    <p>Сайт временно обслуживается. Пожалуйста, повторите запрос позже.</p>
-    <p class="muted">Request ID: vpnbot-edge</p>
+  <main>
+    <h1>Технические работы</h1>
+    <p>Сайт временно недоступен. Пожалуйста, повторите запрос позже.</p>
   </main>
 </body>
 </html>';
@@ -3116,26 +3159,52 @@ server {
     server_name ${NGINX_SERVER_NAME};
     default_type text/html;
 
+    error_page 418 = @vpnbot_scanner_camouflage;
+    if (\$vpnbot_observed_scanner) {
+        return 418;
+    }
+
+    location @vpnbot_scanner_camouflage {
+        return 200 '<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Технические работы</title>
+  <style>
+    body{margin:0;font-family:Arial,sans-serif;background:#f6f7f9;color:#222}
+    main{max-width:720px;margin:14vh auto;padding:32px}
+    h1{margin:0 0 16px;font-size:28px;font-weight:600}
+    p{font-size:16px;line-height:1.55;color:#555}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Технические работы</h1>
+    <p>Сайт временно недоступен. Пожалуйста, повторите запрос позже.</p>
+  </main>
+</body>
+</html>';
+    }
+
     location / {
         return 200 '<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Service Portal</title>
+  <title>Технические работы</title>
   <style>
-    body{margin:0;font-family:Verdana,Arial,sans-serif;background:#f5f7fb;color:#1f2937}
-    .wrap{max-width:760px;margin:12vh auto;padding:40px;background:white;border-radius:18px;box-shadow:0 12px 40px rgba(31,41,55,.12)}
-    h1{margin:0 0 14px;font-size:32px;font-weight:700}
-    p{font-size:16px;line-height:1.55;color:#4b5563}
-    .muted{margin-top:28px;font-size:13px;color:#9ca3af}
+    body{margin:0;font-family:Arial,sans-serif;background:#f6f7f9;color:#222}
+    main{max-width:720px;margin:14vh auto;padding:32px}
+    h1{margin:0 0 16px;font-size:28px;font-weight:600}
+    p{font-size:16px;line-height:1.55;color:#555}
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <h1>Service Portal</h1>
-    <p>Сайт временно обслуживается. Пожалуйста, повторите запрос позже.</p>
-    <p class="muted">Request ID: vpnbot-edge</p>
+  <main>
+    <h1>Технические работы</h1>
+    <p>Сайт временно недоступен. Пожалуйста, повторите запрос позже.</p>
   </main>
 </body>
 </html>';

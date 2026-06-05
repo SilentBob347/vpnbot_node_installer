@@ -72,6 +72,22 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn('network in {"xhttp", "ws", "splithttp", "websocket", "httpupgrade"}', helper)
         self.assertIn('"trustedXForwardedFor"] = ["X-Forwarded-For"]', helper)
 
+    def test_nginx_frontend_camouflages_observed_scanner_ranges(self):
+        self.assertIn("VPNBOT_OBSERVED_SCANNER_CIDRS=", self.text)
+        self.assertIn("vpnbot_observed_scanner", self.text)
+        self.assertIn("85.142.100.0/24", self.text)
+        self.assertIn("212.192.158.0/24", self.text)
+        self.assertIn(r"if (\$vpnbot_observed_scanner)", self.text)
+        self.assertIn("return 418;", self.text)
+        self.assertIn("error_page 418 = @vpnbot_scanner_camouflage;", self.text)
+        self.assertIn("location @vpnbot_scanner_camouflage", self.text)
+
+        self.assertNotIn("212.192.156.0/22", self.text)
+        self.assertNotIn("185.224.228.0/24", self.text)
+        self.assertNotIn("CyberOKInspect", self.text)
+        self.assertNotIn("Service Portal", self.text)
+        self.assertNotIn("vpnbot-edge", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
