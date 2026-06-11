@@ -204,7 +204,8 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
     force_direct_domains = split_list(
         os.environ.get(
             "VPNBOT_XRAY_FORCE_DIRECT_DOMAINS",
-            "domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc",
+            "domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc,"
+            "domain:bingwallpaper.anerg.com,domain:koreanrandom.com",
         )
     )
     allow_domains = split_list(

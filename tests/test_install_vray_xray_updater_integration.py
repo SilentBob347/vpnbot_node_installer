@@ -100,7 +100,7 @@ class XrayRouteHealRulesTests(unittest.TestCase):
     def setUp(self):
         self.route_heal = importlib.import_module("assets.vpnbot_xray_route_heal")
 
-    def test_rutracker_domains_are_forced_direct_and_not_torrent_blocked(self):
+    def test_web_domains_are_forced_direct_and_not_torrent_blocked(self):
         with tempfile.TemporaryDirectory() as raw_tmp:
             tmp = Path(raw_tmp)
             routing_path = tmp / "10_routing.json"
@@ -108,7 +108,13 @@ class XrayRouteHealRulesTests(unittest.TestCase):
 
             payload, summary, changed = self.route_heal.heal_routing(routing_path, tmp)
 
-        forced = ["domain:rutracker.org", "domain:rutracker.cc", "domain:static.rutracker.cc"]
+        forced = [
+            "domain:rutracker.org",
+            "domain:rutracker.cc",
+            "domain:static.rutracker.cc",
+            "domain:bingwallpaper.anerg.com",
+            "domain:koreanrandom.com",
+        ]
         self.assertTrue(changed)
         for matcher in forced:
             self.assertIn(matcher, summary.get("force_direct_domains", []))
