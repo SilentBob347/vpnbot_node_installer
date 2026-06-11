@@ -226,6 +226,7 @@ XRAY_POLICY_UPLINK_ONLY_SECONDS="${XRAY_POLICY_UPLINK_ONLY_SECONDS:-8}"
 XRAY_POLICY_DOWNLINK_ONLY_SECONDS="${XRAY_POLICY_DOWNLINK_ONLY_SECONDS:-20}"
 VPNBOT_XRAY_BLOCK_RU_EGRESS="${VPNBOT_XRAY_BLOCK_RU_EGRESS:-1}"
 VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS:-domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com}"
+VPNBOT_XRAY_FORCE_DIRECT_DOMAINS="${VPNBOT_XRAY_FORCE_DIRECT_DOMAINS:-domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc}"
 VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY:-1}"
 VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS:-}"
 VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS:-}"
@@ -1589,6 +1590,7 @@ ensure_xray_core_ru_egress_block() {
     VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}" \
     VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS}" \
     VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS}" \
+    VPNBOT_XRAY_FORCE_DIRECT_DOMAINS_VALUE="${VPNBOT_XRAY_FORCE_DIRECT_DOMAINS}" \
     VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS_VALUE="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS}" \
     VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE_VALUE="${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE}" \
     VPNBOT_XRAY_RU_GEOSITE_FILE_VALUE="${VPNBOT_XRAY_RU_GEOSITE_FILE}" \
@@ -1679,9 +1681,6 @@ default_torrent_domains = [
     "domain:9.rarbg.me",
     "domain:9.rarbg.to",
     "domain:11.rarbg.com",
-    "domain:rutracker.org",
-    "domain:rutracker.cc",
-    "domain:static.rutracker.cc",
     "domain:ehtracker.org",
     "domain:tracker.grepler.com",
     "domain:tracker.seedoff.net",
@@ -1764,6 +1763,7 @@ if external_geosite_enabled and external_file and external_tag and (share_dir / 
 domains = default_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS_VALUE", ""))
 ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS_VALUE", ""))
 allow_domains = split_list(os.environ.get("VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS_VALUE", ""))
+force_direct_domains = split_list(os.environ.get("VPNBOT_XRAY_FORCE_DIRECT_DOMAINS_VALUE", ""))
 torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS_VALUE", ""))
 torrent_ips = default_torrent_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS_VALUE", ""))
 
@@ -1788,6 +1788,7 @@ if not isinstance(rules, list):
 
 torrent_enabled = env_enabled("VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY_VALUE", default=True)
 managed_tags = {
+    "vpnbot-allow-rutracker-domains",
     "vpnbot-allow-ru-egress-domains",
     "vpnbot-block-torrent-peer-discovery-domains",
     "vpnbot-block-torrent-peer-discovery-ips",
@@ -1812,6 +1813,20 @@ if enabled or torrent_enabled:
                     "domain": allow_domains,
                     "outboundTag": "direct",
                     "ruleTag": "vpnbot-allow-ru-egress-domains",
+                },
+            )
+        )
+    if force_direct_domains:
+        managed.append(
+            (
+                "vpnbot-allow-rutracker-domains",
+                "domain",
+                force_direct_domains,
+                {
+                    "type": "field",
+                    "domain": force_direct_domains,
+                    "outboundTag": "direct",
+                    "ruleTag": "vpnbot-allow-rutracker-domains",
                 },
             )
         )
@@ -1896,6 +1911,12 @@ if enabled or torrent_enabled:
                     or exact_legacy_rule(rule, "ip", torrent_ips)
                 )
             )
+        ]
+    if not force_direct_domains:
+        rules[:] = [
+            rule
+            for rule in rules
+            if not (isinstance(rule, dict) and rule.get("ruleTag") == "vpnbot-allow-rutracker-domains")
         ]
     for tag, key, values, rule in reversed(managed):
         tagged_index = next(
@@ -3544,6 +3565,7 @@ export XRAY_CORE_SERVICE_NAME=${XRAY_CORE_SERVICE_NAME@Q}
 export XRAY_SYNC_SCRIPT=${XRAY_SYNC_SCRIPT@Q}
 export VPNBOT_XRAY_BLOCK_RU_EGRESS=${VPNBOT_XRAY_BLOCK_RU_EGRESS@Q}
 export VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS=${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS@Q}
+export VPNBOT_XRAY_FORCE_DIRECT_DOMAINS=${VPNBOT_XRAY_FORCE_DIRECT_DOMAINS@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY=${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS=${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS=${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS@Q}

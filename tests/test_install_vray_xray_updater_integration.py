@@ -1,4 +1,6 @@
 from pathlib import Path
+import importlib
+import tempfile
 import unittest
 
 
@@ -87,6 +89,48 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertNotIn("CyberOKInspect", self.text)
         self.assertNotIn("Service Portal", self.text)
         self.assertNotIn("vpnbot-edge", self.text)
+
+    def test_installer_bootstrap_forces_rutracker_direct(self):
+        self.assertIn("VPNBOT_XRAY_FORCE_DIRECT_DOMAINS=", self.text)
+        self.assertIn("vpnbot-allow-rutracker-domains", self.text)
+        self.assertIn('"outboundTag": "direct"', self.text)
+
+
+class XrayRouteHealRulesTests(unittest.TestCase):
+    def setUp(self):
+        self.route_heal = importlib.import_module("assets.vpnbot_xray_route_heal")
+
+    def test_rutracker_domains_are_forced_direct_and_not_torrent_blocked(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            routing_path = tmp / "10_routing.json"
+            routing_path.write_text('{"routing":{"rules":[]}}\n', encoding="utf-8")
+
+            payload, summary, changed = self.route_heal.heal_routing(routing_path, tmp)
+
+        forced = ["domain:rutracker.org", "domain:rutracker.cc", "domain:static.rutracker.cc"]
+        self.assertTrue(changed)
+        for matcher in forced:
+            self.assertIn(matcher, summary.get("force_direct_domains", []))
+            self.assertNotIn(matcher, summary["torrent_domains"])
+
+        rules = payload["routing"]["rules"]
+        direct_index = next(
+            idx
+            for idx, rule in enumerate(rules)
+            if rule.get("ruleTag") == "vpnbot-allow-rutracker-domains"
+        )
+        torrent_index = next(
+            idx
+            for idx, rule in enumerate(rules)
+            if rule.get("ruleTag") == "vpnbot-block-torrent-peer-discovery-domains"
+        )
+        direct_rule = rules[direct_index]
+
+        self.assertEqual(direct_rule["outboundTag"], "direct")
+        self.assertLess(direct_index, torrent_index)
+        for matcher in forced:
+            self.assertIn(matcher, direct_rule["domain"])
 
 
 if __name__ == "__main__":

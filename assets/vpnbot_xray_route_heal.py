@@ -17,6 +17,7 @@ from typing import Any
 TRUTHY = {"1", "true", "yes", "on"}
 FALSY = {"0", "false", "no", "off"}
 MANAGED_TAGS = {
+    "vpnbot-allow-rutracker-domains",
     "vpnbot-allow-ru-egress-domains",
     "vpnbot-block-torrent-peer-discovery-domains",
     "vpnbot-block-torrent-peer-discovery-ips",
@@ -79,7 +80,7 @@ def download_file(url: str, target: Path, *, timeout: int = 20) -> bool:
         tmp.unlink(missing_ok=True)
 
 
-def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
     default_domains = [
         "regexp:\\.ru$",
         "regexp:\\.su$",
@@ -116,9 +117,6 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
         "domain:9.rarbg.me",
         "domain:9.rarbg.to",
         "domain:11.rarbg.com",
-        "domain:rutracker.org",
-        "domain:rutracker.cc",
-        "domain:static.rutracker.cc",
         "domain:ehtracker.org",
         "domain:tracker.grepler.com",
         "domain:tracker.seedoff.net",
@@ -203,6 +201,12 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
     ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS", ""))
     torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS", ""))
     torrent_ips = default_torrent_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS", ""))
+    force_direct_domains = split_list(
+        os.environ.get(
+            "VPNBOT_XRAY_FORCE_DIRECT_DOMAINS",
+            "domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc",
+        )
+    )
     allow_domains = split_list(
         os.environ.get(
             "VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS",
@@ -216,7 +220,7 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
             "domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com",
         )
     )
-    return domains, ips, allow_domains, torrent_domains, torrent_ips
+    return domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips
 
 
 def load_routing(path: Path) -> dict[str, Any]:
@@ -240,7 +244,7 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
     before = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     routing = payload["routing"]
     rules = routing["rules"]
-    domains, ips, allow_domains, torrent_domains, torrent_ips = build_default_rules(share_dir)
+    domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips = build_default_rules(share_dir)
     enabled = env_bool("VPNBOT_XRAY_BLOCK_RU_EGRESS", default=True)
     torrent_enabled = env_bool("VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY", default=True)
 
@@ -261,6 +265,20 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
                         "domain": allow_domains,
                         "outboundTag": "direct",
                         "ruleTag": "vpnbot-allow-ru-egress-domains",
+                    },
+                )
+            )
+        if force_direct_domains:
+            managed.append(
+                (
+                    "vpnbot-allow-rutracker-domains",
+                    "domain",
+                    force_direct_domains,
+                    {
+                        "type": "field",
+                        "domain": force_direct_domains,
+                        "outboundTag": "direct",
+                        "ruleTag": "vpnbot-allow-rutracker-domains",
                     },
                 )
             )
@@ -348,6 +366,12 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
                     )
                 )
             ]
+        if not force_direct_domains:
+            rules[:] = [
+                rule
+                for rule in rules
+                if not (isinstance(rule, dict) and rule.get("ruleTag") == "vpnbot-allow-rutracker-domains")
+            ]
         for tag, key, values, rule in reversed(managed):
             tagged_index = next(
                 (idx for idx, existing in enumerate(rules) if isinstance(existing, dict) and existing.get("ruleTag") == tag),
@@ -392,6 +416,7 @@ def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str,
         "enabled": enabled,
         "torrent_enabled": torrent_enabled,
         "allow_domains": allow_domains,
+        "force_direct_domains": force_direct_domains,
         "domains": domains,
         "ips": ips,
         "torrent_domains": torrent_domains,
