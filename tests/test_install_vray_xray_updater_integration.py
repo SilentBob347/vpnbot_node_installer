@@ -2,6 +2,7 @@ from pathlib import Path
 import importlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 INSTALLER = Path(__file__).resolve().parents[1] / "scripts" / "install_vray.sh"
@@ -137,6 +138,72 @@ class XrayRouteHealRulesTests(unittest.TestCase):
         self.assertLess(direct_index, torrent_index)
         for matcher in forced:
             self.assertIn(matcher, direct_rule["domain"])
+
+
+class VlessPresetHelperTlsDomainTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = importlib.import_module("assets.vpnbot_vless_presets")
+
+    def test_tls_domain_choices_include_certificate_san_domains(self):
+        with mock.patch.object(
+            self.helper,
+            "certificate_dns_names",
+            return_value=["roskomfuckyou.ftp.sh", "supercoolmyip.dynv6.net", "*.example.org"],
+        ):
+            self.assertEqual(
+                self.helper.tls_domain_choices("roskomfuckyou.ftp.sh"),
+                ["roskomfuckyou.ftp.sh", "supercoolmyip.dynv6.net"],
+            )
+
+    def test_tls_domain_validation_accepts_certificate_san_domain(self):
+        with mock.patch.object(
+            self.helper,
+            "certificate_dns_names",
+            return_value=["roskomfuckyou.ftp.sh", "supercoolmyip.dynv6.net", "*.example.org"],
+        ):
+            self.assertTrue(
+                self.helper.tls_domain_is_covered(
+                    "supercoolmyip.dynv6.net",
+                    public_tls_domain="roskomfuckyou.ftp.sh",
+                )
+            )
+            self.assertTrue(
+                self.helper.tls_domain_is_covered(
+                    "api.example.org",
+                    public_tls_domain="roskomfuckyou.ftp.sh",
+                )
+            )
+            self.assertFalse(
+                self.helper.tls_domain_is_covered(
+                    "other.example.net",
+                    public_tls_domain="roskomfuckyou.ftp.sh",
+                )
+            )
+
+    def test_tls_catalog_keeps_main_ids_and_adds_certificate_san_items(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            state_path = Path(raw_tmp) / "state.json"
+            state_path.write_text('{"public_domain":"roskomfuckyou.ftp.sh"}\n', encoding="utf-8")
+            with (
+                mock.patch.object(self.helper, "XRAY_STATE_FILE", state_path),
+                mock.patch.object(
+                    self.helper,
+                    "certificate_dns_names",
+                    return_value=["roskomfuckyou.ftp.sh", "supercoolmyip.dynv6.net"],
+                ),
+            ):
+                groups = self.helper.build_xray_catalog_groups()
+
+        tls_group = next(group for group in groups if group["title"] == "Standalone Xray-core: TLS")
+        items_by_id = {item["id"]: item for item in tls_group["items"]}
+        self.assertEqual(
+            items_by_id["xray_vless_grpc_tls_443"]["line"],
+            "443 vless grpc tls roskomfuckyou.ftp.sh",
+        )
+        self.assertEqual(
+            items_by_id["xray_vless_grpc_tls_443_supercoolmyip-dynv6-net"]["line"],
+            "443 vless grpc tls supercoolmyip.dynv6.net",
+        )
 
 
 if __name__ == "__main__":

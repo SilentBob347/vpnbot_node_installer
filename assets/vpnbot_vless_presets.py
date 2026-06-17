@@ -212,6 +212,62 @@ def normalize_sni(value: str) -> str:
     return str(value or "").strip().lower()
 
 
+def unique_normalized_names(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_sni(value)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def certificate_dns_names(cert_path: str = DEFAULT_TLS_CERT) -> list[str]:
+    try:
+        decoded = ssl._ssl._test_decode_cert(str(cert_path))
+    except Exception:
+        return []
+
+    names: list[str] = []
+    for kind, value in decoded.get("subjectAltName") or []:
+        if str(kind or "").lower() == "dns":
+            names.append(str(value or ""))
+    for rdn in decoded.get("subject") or []:
+        for key, value in rdn:
+            if str(key or "").lower() == "commonname":
+                names.append(str(value or ""))
+    return unique_normalized_names(names)
+
+
+def dns_name_matches(pattern: str, domain: str) -> bool:
+    pattern = normalize_sni(pattern)
+    domain = normalize_sni(domain)
+    if not pattern or not domain:
+        return False
+    if pattern.startswith("*."):
+        suffix = pattern[1:]
+        prefix = domain[: -len(suffix)] if domain.endswith(suffix) else ""
+        return bool(prefix) and "." not in prefix.rstrip(".")
+    return pattern == domain
+
+
+def tls_domain_choices(public_tls_domain: str = "", cert_path: str = DEFAULT_TLS_CERT) -> list[str]:
+    names = [normalize_sni(public_tls_domain)]
+    names.extend(name for name in certificate_dns_names(cert_path) if not name.startswith("*."))
+    return unique_normalized_names(names)
+
+
+def tls_domain_is_covered(domain: str, public_tls_domain: str = "", cert_path: str = DEFAULT_TLS_CERT) -> bool:
+    normalized = normalize_sni(domain)
+    if not normalized:
+        return False
+    if public_tls_domain and normalized == normalize_sni(public_tls_domain):
+        return True
+    names = certificate_dns_names(cert_path)
+    if not names:
+        return not public_tls_domain
+    return any(dns_name_matches(name, normalized) for name in names)
+
+
 def parse_custom_spec_line(line: str) -> dict:
     original = line.strip()
     if not original:
@@ -520,7 +576,8 @@ def custom_http_path(spec: dict) -> str:
 
 def build_xray_catalog_groups() -> list[dict]:
     state = load_xray_state()
-    tls_domain = get_public_tls_domain(state) or "www.amd.com"
+    public_tls_domain = get_public_tls_domain(state)
+    tls_domains = tls_domain_choices(public_tls_domain) or ["www.amd.com"]
 
     reality_tcp_items = []
     for domain in XRAY_TCP_REALITY_DOMAINS:
@@ -577,26 +634,37 @@ def build_xray_catalog_groups() -> list[dict]:
                 }
             )
 
-    tls_items = [
-        {"id": "xray_vless_xhttp_tls_443", "title": f"443 VLESS XHTTP TLS {tls_domain}", "line": f"443 vless xhttp tls {tls_domain}"},
-        {"id": "xray_vless_tcp_tls_443", "title": f"443 VLESS TCP TLS {tls_domain}", "line": f"443 vless tcp tls {tls_domain}"},
-        {"id": "xray_vless_grpc_tls_443", "title": f"443 VLESS gRPC TLS {tls_domain}", "line": f"443 vless grpc tls {tls_domain}"},
-        {"id": "xray_vmess_tls_8443", "title": f"8443 VMESS TCP TLS {tls_domain}", "line": f"8443 vmess tcp tls {tls_domain}"},
-        {"id": "xray_trojan_tcp_tls_8443", "title": f"8443 TROJAN TCP TLS {tls_domain}", "line": f"8443 trojan tcp tls {tls_domain}"},
-        {"id": "xray_vless_xhttp_tls_8443", "title": f"8443 VLESS XHTTP TLS {tls_domain}", "line": f"8443 vless xhttp tls {tls_domain}"},
-        {"id": "xray_vless_grpc_tls_8443", "title": f"8443 VLESS gRPC TLS {tls_domain}", "line": f"8443 vless grpc tls {tls_domain}"},
-        {"id": "xray_vless_tls_public", "title": f"случайный direct-порт VLESS TCP TLS {tls_domain}", "line": f"vless tcp tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_trojan_tls_public", "title": f"случайный direct-порт TROJAN TCP TLS {tls_domain}", "line": f"trojan tcp tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_vless_xhttp_tls_public", "title": f"случайный direct-порт VLESS XHTTP TLS {tls_domain}", "line": f"vless xhttp tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_trojan_xhttp_tls_public", "title": f"случайный direct-порт TROJAN XHTTP TLS {tls_domain}", "line": f"trojan xhttp tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_vmess_xhttp_tls_public", "title": f"случайный direct-порт VMESS XHTTP TLS {tls_domain}", "line": f"vmess xhttp tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_vless_ws_tls_public", "title": f"случайный direct-порт VLESS WS TLS {tls_domain}", "line": f"vless ws tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_trojan_ws_tls_public", "title": f"случайный direct-порт TROJAN WS TLS {tls_domain}", "line": f"trojan ws tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_vmess_ws_tls_public", "title": f"случайный direct-порт VMESS WS TLS {tls_domain}", "line": f"vmess ws tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_vless_grpc_tls_public", "title": f"случайный direct-порт VLESS gRPC TLS {tls_domain}", "line": f"vless grpc tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_trojan_grpc_tls_public", "title": f"случайный direct-порт TROJAN gRPC TLS {tls_domain}", "line": f"trojan grpc tls {tls_domain} случайный direct-порт"},
-        {"id": "xray_vmess_grpc_tls_public", "title": f"случайный direct-порт VMESS gRPC TLS {tls_domain}", "line": f"vmess grpc tls {tls_domain} случайный direct-порт"},
+    tls_templates = [
+        ("xray_vless_xhttp_tls_443", "443 VLESS XHTTP TLS {domain}", "443 vless xhttp tls {domain}"),
+        ("xray_vless_tcp_tls_443", "443 VLESS TCP TLS {domain}", "443 vless tcp tls {domain}"),
+        ("xray_vless_grpc_tls_443", "443 VLESS gRPC TLS {domain}", "443 vless grpc tls {domain}"),
+        ("xray_vmess_tls_8443", "8443 VMESS TCP TLS {domain}", "8443 vmess tcp tls {domain}"),
+        ("xray_trojan_tcp_tls_8443", "8443 TROJAN TCP TLS {domain}", "8443 trojan tcp tls {domain}"),
+        ("xray_vless_xhttp_tls_8443", "8443 VLESS XHTTP TLS {domain}", "8443 vless xhttp tls {domain}"),
+        ("xray_vless_grpc_tls_8443", "8443 VLESS gRPC TLS {domain}", "8443 vless grpc tls {domain}"),
+        ("xray_vless_tls_public", "случайный direct-порт VLESS TCP TLS {domain}", "vless tcp tls {domain} случайный direct-порт"),
+        ("xray_trojan_tls_public", "случайный direct-порт TROJAN TCP TLS {domain}", "trojan tcp tls {domain} случайный direct-порт"),
+        ("xray_vless_xhttp_tls_public", "случайный direct-порт VLESS XHTTP TLS {domain}", "vless xhttp tls {domain} случайный direct-порт"),
+        ("xray_trojan_xhttp_tls_public", "случайный direct-порт TROJAN XHTTP TLS {domain}", "trojan xhttp tls {domain} случайный direct-порт"),
+        ("xray_vmess_xhttp_tls_public", "случайный direct-порт VMESS XHTTP TLS {domain}", "vmess xhttp tls {domain} случайный direct-порт"),
+        ("xray_vless_ws_tls_public", "случайный direct-порт VLESS WS TLS {domain}", "vless ws tls {domain} случайный direct-порт"),
+        ("xray_trojan_ws_tls_public", "случайный direct-порт TROJAN WS TLS {domain}", "trojan ws tls {domain} случайный direct-порт"),
+        ("xray_vmess_ws_tls_public", "случайный direct-порт VMESS WS TLS {domain}", "vmess ws tls {domain} случайный direct-порт"),
+        ("xray_vless_grpc_tls_public", "случайный direct-порт VLESS gRPC TLS {domain}", "vless grpc tls {domain} случайный direct-порт"),
+        ("xray_trojan_grpc_tls_public", "случайный direct-порт TROJAN gRPC TLS {domain}", "trojan grpc tls {domain} случайный direct-порт"),
+        ("xray_vmess_grpc_tls_public", "случайный direct-порт VMESS gRPC TLS {domain}", "vmess grpc tls {domain} случайный direct-порт"),
     ]
+    tls_items = []
+    for domain_index, tls_domain in enumerate(tls_domains):
+        id_suffix = "" if domain_index == 0 else f"_{slugify(tls_domain)}"
+        for item_id, title, line in tls_templates:
+            tls_items.append(
+                {
+                    "id": f"{item_id}{id_suffix}",
+                    "title": title.format(domain=tls_domain),
+                    "line": line.format(domain=tls_domain),
+                }
+            )
 
     items = []
     for group_items in (reality_tcp_items, reality_xhttp_items, tls_items):
@@ -974,11 +1042,13 @@ def build_xray_payload(spec: dict, rows: list[dict]) -> tuple[dict | None, str]:
     else:
         raise SystemExit(f"Неподдерживаемый протокол для xray-core helper: {protocol}")
 
-    if security == "tls" and public_tls_domain and domain and domain != public_tls_domain:
+    if security == "tls" and domain and not tls_domain_is_covered(domain, public_tls_domain):
+        allowed_domains = ", ".join(tls_domain_choices(public_tls_domain)) or public_tls_domain or "<сертификат не прочитан>"
         raise SystemExit(
-            "Для TLS-inbound standalone xray-core installer сейчас использует сертификат, выпущенный на "
-            f"{public_tls_domain}. Поэтому для TLS в каталоге укажи именно этот домен, "
-            "либо сначала подготовь другой сертификат вручную."
+            "Для TLS-inbound standalone xray-core helper может использовать только домены, "
+            f"которые есть в текущем сертификате {DEFAULT_TLS_CERT}. "
+            f"Запрошен домен {domain}, доступные домены: {allowed_domains}. "
+            "Сначала перевыпусти сертификат с этим DNS-именем или выбери один из доступных TLS-доменов."
         )
 
     publication_marker = (
