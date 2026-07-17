@@ -187,6 +187,19 @@ def _client_email(user_id: int, inbound: dict[str, Any]) -> str:
     return f"tele{int(user_id)}_port{int(inbound.get('port') or 0)}"
 
 
+def _email_user_id(email: str) -> int | None:
+    value = str(email or "").strip()
+    if re.fullmatch(r"[1-9][0-9]*", value):
+        return int(value)
+    match = re.fullmatch(
+        r"tele([1-9][0-9]*)(?:_port[0-9]+(?:_[^\s]+)?)?",
+        value,
+    )
+    if not match:
+        return None
+    return int(match.group(1))
+
+
 def _client_flow(inbound: dict[str, Any]) -> str:
     marker_text = "{} {}".format(inbound.get("remark") or "", inbound.get("tag") or "").lower()
     if "no flow" in marker_text or "noflow" in marker_text or "no-flow" in marker_text:
@@ -661,6 +674,96 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
         }
 
 
+def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
+    """Remove one exact managed credential under the node-wide file lock."""
+
+    target_id = str(ns.client_id or "").strip()
+    if not target_id:
+        raise XrayCtlError("client identifier is required")
+    expected_user_id = int(ns.expected_user_id or 0)
+    path = Path(ns.managed_file)
+    with _FileLock(_lock_path(ns)):
+        original_payload = _load_payload(path)
+        payload = json.loads(json.dumps(original_payload, ensure_ascii=False))
+        raw = _find_raw_inbound(payload, int(ns.inbound_id))
+        if raw is None:
+            return {"ok": True, "removed": False, "runtime_only": False}
+
+        inbound = _normalize_inbound(raw)
+        settings = raw.get("settings")
+        clients = settings.get("clients", []) if isinstance(settings, dict) else []
+        if not isinstance(clients, list):
+            raise XrayCtlError("inbound clients list is invalid")
+
+        matches = [
+            client
+            for client in clients
+            if isinstance(client, dict)
+            and _extract_client_identifier(client, inbound.get("protocol")) == target_id
+        ]
+        if not matches:
+            return {"ok": True, "removed": False, "runtime_only": False}
+        if len(matches) != 1:
+            raise XrayCtlError("exact client identifier is duplicated in inbound")
+
+        target = matches[0]
+        target_email = str(target.get("email") or "").strip()
+        tag = str(inbound.get("tag") or "").strip()
+        if not target_email or not tag:
+            raise XrayCtlError("exact client has no removable runtime identity")
+        if expected_user_id > 0 and _email_user_id(target_email) != expected_user_id:
+            raise XrayCtlError("exact client owner does not match expected user")
+        if sum(
+            1
+            for client in clients
+            if isinstance(client, dict)
+            and str(client.get("email") or "").strip() == target_email
+        ) != 1:
+            raise XrayCtlError("exact client email is duplicated in inbound")
+
+        settings["clients"] = [client for client in clients if client is not target]
+        _atomic_write(path, payload)
+        try:
+            _validate_config(ns)
+        except Exception:
+            # Validation happens before any live mutation, so restoring the
+            # original managed snapshot is still safe in this phase.
+            _atomic_write(path, original_payload)
+            raise
+
+        # From the first API attempt onward this generation is an irreversible
+        # rotation. If the response is lost or a restart fails, keep the
+        # managed snapshot without the key; the durable queue will retry and
+        # converge runtime to this snapshot. Restoring here could resurrect an
+        # already deleted key on a later Xray restart.
+        code, out, err = _api_remove_user(ns, tag, target_email)
+        if code != 0 and _api_reports_handler_missing(out, err):
+            _maybe_restart_xray_service_for_handler_mismatch(ns)
+            restarted_for_handler_mismatch = True
+            code, out, err = _api_remove_user(ns, tag, target_email)
+        else:
+            restarted_for_handler_mismatch = False
+        if code != 0:
+            raise XrayCtlError(
+                f"xray api exact remove failed: exit={code} "
+                f"stdout={out[-500:]} stderr={err[-500:]}"
+            )
+        runtime_removed = not _api_removed_no_users(out)
+        restart_applied = False
+        if not runtime_removed:
+            _maybe_restart_xray_service_for_runtime_remove_zero(ns)
+            restart_applied = True
+
+        return {
+            "ok": True,
+            "removed": True,
+            "runtime_only": False,
+            "runtime_removed": runtime_removed,
+            "restart_applied": restart_applied,
+            "handler_mismatch_restarted": restarted_for_handler_mismatch,
+        }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local VPnBot Xray-core control helper")
     parser.add_argument("--managed-file", default=DEFAULT_MANAGED_FILE)
@@ -687,6 +790,10 @@ def build_parser() -> argparse.ArgumentParser:
     remove = subparsers.add_parser("remove-client")
     remove.add_argument("--inbound-id", required=True, type=int)
     remove.add_argument("--user-id", required=True, type=int)
+    remove_exact = subparsers.add_parser("remove-client-by-identifier")
+    remove_exact.add_argument("--inbound-id", required=True, type=int)
+    remove_exact.add_argument("--client-id", required=True)
+    remove_exact.add_argument("--expected-user-id", type=int, default=0)
     return parser
 
 
@@ -702,6 +809,8 @@ def main(argv: list[str] | None = None) -> int:
             return _json_response(cmd_ensure_client(ns))
         if ns.command == "remove-client":
             return _json_response(cmd_remove_client(ns))
+        if ns.command == "remove-client-by-identifier":
+            return _json_response(cmd_remove_client_by_identifier(ns))
         raise XrayCtlError(f"unknown command: {ns.command}")
     except Exception as exc:
         return _json_response({"ok": False, "error": str(exc), "error_type": type(exc).__name__}, exit_code=1)
