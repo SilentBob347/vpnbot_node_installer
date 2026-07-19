@@ -1,7 +1,8 @@
-import unittest
 import importlib
+import json
 import shutil
 import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -39,14 +40,23 @@ class XrayCoreUpdaterTests(unittest.TestCase):
             {
                 "tag_name": "v26.3.27",
                 "prerelease": False,
-                "assets": [{"name": "Xray-linux-64.zip", "browser_download_url": "https://example/xray.zip"}],
+                "assets": [
+                    {
+                        "name": "Xray-linux-64.zip",
+                        "url": "https://api.github.com/repos/XTLS/Xray-core/releases/assets/123",
+                        "browser_download_url": "https://github.com/example/xray.zip",
+                    }
+                ],
             },
         ]
 
         selected = updater.select_release(releases, channel="stable", version="latest", archive_name="Xray-linux-64.zip")
 
         self.assertEqual(selected.tag, "v26.3.27")
-        self.assertEqual(selected.asset_url, "https://example/xray.zip")
+        self.assertEqual(
+            selected.asset_url,
+            "https://api.github.com/repos/XTLS/Xray-core/releases/assets/123",
+        )
 
     def test_update_needed_compares_normalized_versions(self):
         updater = self.require_updater()
@@ -68,6 +78,82 @@ class XrayCoreUpdaterTests(unittest.TestCase):
         url = "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip"
 
         self.assertEqual(updater.release_tag_from_download_url(url), "v26.3.27")
+
+    def test_request_json_prefers_curl_transport(self):
+        updater = self.require_updater()
+        payload = {"tag_name": "v26.7.11"}
+
+        with mock.patch.object(updater, "_curl_request_text", return_value=json.dumps(payload)) as curl_request, mock.patch.object(
+            updater.urllib.request,
+            "urlopen",
+        ) as urlopen:
+            result = updater.request_json("https://api.example/releases", timeout=9)
+
+        self.assertEqual(result, payload)
+        curl_request.assert_called_once_with("https://api.example/releases", 9)
+        urlopen.assert_not_called()
+
+    def test_curl_transport_is_https_only_and_ipv4(self):
+        updater = self.require_updater()
+
+        with mock.patch.object(updater.shutil, "which", return_value="/usr/bin/curl"):
+            args = updater._curl_base_args(40)
+
+        self.assertIn("--ipv4", args)
+        self.assertEqual(args[args.index("--proto") + 1], "=https")
+        self.assertEqual(args[args.index("--proto-redir") + 1], "=https")
+
+    def test_request_json_falls_back_to_urllib(self):
+        updater = self.require_updater()
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        response.read.return_value = b'{"tag_name":"v26.7.11"}'
+
+        with mock.patch.object(updater, "_curl_request_text", side_effect=RuntimeError("curl blocked")), mock.patch.object(
+            updater.urllib.request,
+            "urlopen",
+            return_value=response,
+        ) as urlopen:
+            result = updater.request_json("https://api.example/releases", timeout=9)
+
+        self.assertEqual(result, {"tag_name": "v26.7.11"})
+        urlopen.assert_called_once()
+
+    def test_download_file_prefers_curl_transport(self):
+        updater = self.require_updater()
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            target = Path(raw_tmp) / "xray.zip"
+
+            def fake_download(_url, path, _timeout):
+                path.write_bytes(b"archive")
+
+            with mock.patch.object(updater, "_curl_download", side_effect=fake_download) as curl_download, mock.patch.object(
+                updater.urllib.request,
+                "urlopen",
+            ) as urlopen:
+                updater.download_file("https://example/xray.zip", target, timeout=11)
+
+            self.assertEqual(target.read_bytes(), b"archive")
+            curl_download.assert_called_once_with("https://example/xray.zip", target, 11)
+            urlopen.assert_not_called()
+
+    def test_curl_download_uses_github_asset_api_headers(self):
+        updater = self.require_updater()
+        url = "https://api.github.com/repos/XTLS/Xray-core/releases/assets/123"
+
+        with mock.patch.object(updater, "_curl_base_args", return_value=["curl"]) as base_args, mock.patch.object(
+            updater,
+            "_run_curl",
+        ) as run_curl:
+            updater._curl_download(url, Path("/tmp/xray.zip"), timeout=17)
+
+        base_args.assert_called_once_with(17)
+        args = run_curl.call_args.args[0]
+        self.assertIn("Accept: application/octet-stream", args)
+        self.assertIn("X-GitHub-Api-Version: 2022-11-28", args)
+        run_curl.assert_called_once_with(args, 17)
 
     def test_install_candidate_replaces_running_binary_atomically(self):
         updater = self.require_updater()

@@ -132,9 +132,95 @@ def is_update_needed(current_version: str, target_version: str) -> bool:
     return current != target
 
 
+def _curl_base_args(timeout: int) -> list[str]:
+    curl = shutil.which("curl")
+    if not curl:
+        raise RuntimeError("curl is not installed")
+    return [
+        curl,
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--ipv4",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--connect-timeout",
+        str(max(1, min(int(timeout), 15))),
+        "--max-time",
+        str(max(1, int(timeout))),
+        "--user-agent",
+        "vpnbot-xray-core-updater",
+    ]
+
+
+def _run_curl(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        args,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=max(1, int(timeout)) + 5,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"curl failed with exit={result.returncode}")
+    return result
+
+
+def _curl_request_text(url: str, timeout: int) -> str:
+    result = _run_curl([*_curl_base_args(timeout), url], timeout)
+    return result.stdout
+
+
+def _curl_effective_url(url: str, timeout: int) -> str:
+    result = _run_curl(
+        [
+            *_curl_base_args(timeout),
+            "--head",
+            "--output",
+            os.devnull,
+            "--write-out",
+            "%{url_effective}",
+            url,
+        ],
+        timeout,
+    )
+    return result.stdout.strip()
+
+
+def _curl_download(url: str, target: Path, timeout: int) -> None:
+    args = _curl_base_args(timeout)
+    if _is_github_asset_api_url(url):
+        args.extend(
+            [
+                "--header",
+                "Accept: application/octet-stream",
+                "--header",
+                "X-GitHub-Api-Version: 2022-11-28",
+            ]
+        )
+    _run_curl([*args, "--output", str(target), url], timeout)
+
+
+def _is_github_asset_api_url(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(str(url or ""))
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "api.github.com"
+        and "/releases/assets/" in parsed.path
+    )
+
+
 
 
 def request_json(url: str, timeout: int = 30) -> Any:
+    try:
+        return json.loads(_curl_request_text(url, timeout))
+    except Exception as curl_exc:
+        curl_error = curl_exc
+
     req = urllib.request.Request(
         url,
         headers={
@@ -142,8 +228,14 @@ def request_json(url: str, timeout: int = 30) -> Any:
             "User-Agent": "vpnbot-xray-core-updater",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.load(response)
+    except Exception as urllib_exc:
+        raise RuntimeError(
+            f"GitHub request failed via curl ({type(curl_error).__name__}) "
+            f"and urllib ({type(urllib_exc).__name__})"
+        ) from urllib_exc
 
 
 def release_tag_from_download_url(url: str) -> str:
@@ -155,13 +247,22 @@ def resolve_latest_download_release(settings: Settings, archive_name: str) -> Re
     base = settings.latest_download_base.rstrip("/")
     asset_url = f"{base}/{archive_name}"
     digest_url = f"{base}/{archive_name}.dgst"
-    req = urllib.request.Request(
-        settings.latest_release_url,
-        method="HEAD",
-        headers={"User-Agent": "vpnbot-xray-core-updater"},
-    )
-    with urllib.request.urlopen(req, timeout=settings.timeout_seconds) as response:
-        final_url = response.geturl()
+    try:
+        final_url = _curl_effective_url(settings.latest_release_url, settings.timeout_seconds)
+    except Exception as curl_exc:
+        req = urllib.request.Request(
+            settings.latest_release_url,
+            method="HEAD",
+            headers={"User-Agent": "vpnbot-xray-core-updater"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=settings.timeout_seconds) as response:
+                final_url = response.geturl()
+        except Exception as urllib_exc:
+            raise RuntimeError(
+                f"Latest release lookup failed via curl ({type(curl_exc).__name__}) "
+                f"and urllib ({type(urllib_exc).__name__})"
+            ) from urllib_exc
     tag = release_tag_from_download_url(final_url)
     return ReleaseInfo(tag=tag or "latest", asset_url=asset_url, digest_url=digest_url)
 
@@ -205,7 +306,7 @@ def select_release(
         if not isinstance(asset, dict):
             continue
         name = str(asset.get("name") or "")
-        url = str(asset.get("browser_download_url") or "").strip()
+        url = str(asset.get("url") or asset.get("browser_download_url") or "").strip()
         if name == archive_name:
             asset_url = url
         elif name in {f"{archive_name}.dgst", f"{archive_name}.sha256", f"{archive_name}.sha256sum"}:
@@ -267,9 +368,29 @@ def current_xray_version(xray_bin: Path, timeout: int) -> str:
 
 
 def download_file(url: str, target: Path, timeout: int) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": "vpnbot-xray-core-updater"})
-    with urllib.request.urlopen(req, timeout=timeout) as response, target.open("wb") as fh:
-        shutil.copyfileobj(response, fh)
+    try:
+        _curl_download(url, target, timeout)
+        return
+    except Exception as curl_exc:
+        curl_error = curl_exc
+
+    headers = {"User-Agent": "vpnbot-xray-core-updater"}
+    if _is_github_asset_api_url(url):
+        headers.update(
+            {
+                "Accept": "application/octet-stream",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+        )
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response, target.open("wb") as fh:
+            shutil.copyfileobj(response, fh)
+    except Exception as urllib_exc:
+        raise RuntimeError(
+            f"Xray-core download failed via curl ({type(curl_error).__name__}) "
+            f"and urllib ({type(urllib_exc).__name__})"
+        ) from urllib_exc
 
 
 def verify_digest(archive_path: Path, digest_path: Path) -> None:
