@@ -16,7 +16,7 @@ STATE_DIR = Path(os.environ.get("VPNBOT_NODE_WATCHDOG_STATE_DIR", "/var/lib/vpnb
 STATE_FILE = Path(os.environ.get("VPNBOT_NODE_WATCHDOG_STATE_FILE", str(STATE_DIR / "state.json")))
 EVENTS_FILE = Path(os.environ.get("VPNBOT_NODE_WATCHDOG_EVENTS_FILE", str(STATE_DIR / "events.jsonl")))
 
-PROD_HOST = os.environ.get("VPNBOT_NODE_WATCHDOG_PROD_HOST", "185.170.154.155")
+PROD_HOST = os.environ.get("VPNBOT_NODE_WATCHDOG_PROD_HOST", "31.77.143.77")
 PROD_PORT = int(os.environ.get("VPNBOT_NODE_WATCHDOG_PROD_PORT", "10222") or "10222")
 PUBLIC_HOST = os.environ.get("VPNBOT_NODE_WATCHDOG_PUBLIC_HOST", "1.1.1.1")
 PUBLIC_PORT = int(os.environ.get("VPNBOT_NODE_WATCHDOG_PUBLIC_PORT", "53") or "53")
