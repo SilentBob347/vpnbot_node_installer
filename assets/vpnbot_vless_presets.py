@@ -1183,12 +1183,40 @@ def validate_and_restart_xray() -> None:
     subprocess.run(["systemctl", "is-active", "--quiet", XRAY_SERVICE_NAME], check=True)
 
 
-def apply_lines_via_xray(lines: list[str]) -> int:
+def assert_replace_profile_is_empty_of_clients(rows: list[dict]) -> None:
+    """Fail closed before replacing any inbound that already owns credentials."""
+
+    client_count = 0
+    occupied_inbounds = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        settings = row.get("settings") or {}
+        clients = settings.get("clients") if isinstance(settings, dict) else []
+        if not isinstance(clients, list) or not clients:
+            continue
+        occupied_inbounds += 1
+        client_count += sum(1 for client in clients if isinstance(client, dict))
+    if client_count:
+        raise SystemExit(
+            "Отказ от замены профиля: существующие inbound'ы уже содержат "
+            f"клиентов (inbounds={occupied_inbounds}, clients={client_count}). "
+            "Сначала штатно перенесите или удалите эти ключи."
+        )
+
+
+def apply_lines_via_xray(lines: list[str], *, replace: bool = False) -> int:
     _, rows = load_xray_inbounds()
-    prepared = prepare_xray_specs(lines, rows)
+    if replace:
+        assert_replace_profile_is_empty_of_clients(rows)
+    # During an explicit replacement the old managed rows are the objects
+    # being removed, not competing routes.  Planning against them would make
+    # the helper move its own requested 443/8443 routes to random ports.
+    planning_rows = [] if replace else rows
+    prepared = prepare_xray_specs(lines, planning_rows)
     notes = []
     created = []
-    new_rows = list(rows)
+    new_rows = [] if replace else list(rows)
     for spec in prepared:
         payload, note = build_xray_payload(spec, new_rows)
         notes.append(note)
@@ -1220,6 +1248,10 @@ def apply_lines_via_xray(lines: list[str]) -> int:
 
     print("VPnBot standalone xray-core catalog result")
     print("==========================================")
+    if replace:
+        print(
+            f"- replace-profile: removed={len(rows)} published={len(new_rows)}"
+        )
     for note in notes:
         print(f"- {note}")
     for spec in prepared:
@@ -1246,6 +1278,9 @@ def apply_lines_via_xray(lines: list[str]) -> int:
                 f"  • tag={obj.get('tag')} {obj.get('protocol')} {network}/{security or 'none'} "
                 f"port={obj.get('port')} mode={mode} sni={','.join(server_names)}"
             )
+    elif replace:
+        print("")
+        print("Профиль заменён: активных inbound'ов нет.")
     else:
         print("")
         print("Новых inbound'ов не понадобилось: подходящие уже существовали.")
@@ -1278,9 +1313,12 @@ def main(argv: list[str]) -> int:
     if len(argv) > 1 and argv[1] == "--catalog-json":
         print(json.dumps(groups, ensure_ascii=False, indent=2))
         return 0
-    if len(argv) > 1 and argv[1] == "--apply-lines-json":
+    if len(argv) > 1 and argv[1] in {"--apply-lines-json", "--replace-lines-json"}:
+        operation = argv[1]
         if len(argv) < 3:
-            raise SystemExit("Usage: vpnbot-vless-presets --apply-lines-json <file>")
+            raise SystemExit(
+                f"Usage: vpnbot-vless-presets {operation} <file>"
+            )
         payload = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
         if not isinstance(payload, list):
             raise SystemExit("Expected JSON array of catalog lines")
@@ -1291,7 +1329,10 @@ def main(argv: list[str]) -> int:
             text = item.strip()
             if text and text not in lines:
                 lines.append(text)
-        return apply_lines_via_xray(lines)
+        return apply_lines_via_xray(
+            lines,
+            replace=operation == "--replace-lines-json",
+        )
     lines = select_catalog_lines(groups)
     if not lines:
         return 0

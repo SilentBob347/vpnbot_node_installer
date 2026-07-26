@@ -206,5 +206,99 @@ class VlessPresetHelperTlsDomainTests(unittest.TestCase):
         )
 
 
+class VlessPresetProfileReplacementTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = importlib.import_module("assets.vpnbot_vless_presets")
+
+    def test_profile_replacement_refuses_to_delete_existing_clients(self):
+        rows = [
+            {
+                "tag": "[shared:443] existing",
+                "settings": {
+                    "clients": [
+                        {"id": "00000000-0000-0000-0000-000000000001"}
+                    ]
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(SystemExit, "clients=1"):
+            self.helper.assert_replace_profile_is_empty_of_clients(rows)
+
+    def test_profile_replacement_plans_without_self_conflicting_old_routes(self):
+        build_rows_seen = []
+        old_rows = [
+            {
+                "tag": "[shared:443] old",
+                "port": 30001,
+                "protocol": "vless",
+                "settings": {"clients": []},
+                "streamSettings": {
+                    "network": "tcp",
+                    "security": "reality",
+                    "realitySettings": {
+                        "serverNames": ["www.amd.com"],
+                    },
+                },
+            }
+        ]
+        new_row = {
+            "tag": "[shared:443] new",
+            "port": 30002,
+            "protocol": "vless",
+            "settings": {"clients": []},
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "serverNames": ["www.amd.com"],
+                },
+            },
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as raw_tmp,
+            mock.patch.object(
+                self.helper,
+                "XRAY_MANAGED_INBOUNDS_FILE",
+                Path(raw_tmp) / "managed.json",
+            ),
+            mock.patch.object(
+                self.helper,
+                "load_xray_inbounds",
+                return_value=({"inbounds": old_rows}, old_rows),
+            ),
+            mock.patch.object(
+                self.helper,
+                "prepare_xray_specs",
+                return_value=[{"line": "new"}],
+            ) as prepare,
+            mock.patch.object(
+                self.helper,
+                "build_xray_payload",
+                side_effect=lambda spec, rows: (
+                    build_rows_seen.append(list(rows)) or new_row,
+                    "created",
+                ),
+            ),
+            mock.patch.object(self.helper, "save_xray_inbounds") as save,
+            mock.patch.object(self.helper, "sync_xray_reserved_ports"),
+            mock.patch.object(self.helper, "validate_and_restart_xray"),
+            mock.patch.object(self.helper.subprocess, "run"),
+        ):
+            result = self.helper.apply_lines_via_xray(
+                ["443 vless tcp raw www.amd.com"],
+                replace=True,
+            )
+
+        self.assertEqual(0, result)
+        prepare.assert_called_once_with(
+            ["443 vless tcp raw www.amd.com"],
+            [],
+        )
+        self.assertEqual([[]], build_rows_seen)
+        save.assert_called_once_with([new_row])
+
+
 if __name__ == "__main__":
     unittest.main()
