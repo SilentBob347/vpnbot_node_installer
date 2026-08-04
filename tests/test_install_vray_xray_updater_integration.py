@@ -41,14 +41,16 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertNotIn("install_3xui_noninteractive", main_body)
 
     def test_xray_logrotate_reopens_logger_without_copying_the_live_file(self):
+        log_hygiene = (REPO_ROOT / "scripts" / "install_xray_log_hygiene.sh").read_text(encoding="utf-8")
         self.assertIn('"LoggerService"', self.text)
-        self.assertIn("api restartlogger --server=${XRAY_CORE_API_SERVER}", self.text)
-        self.assertIn("nodelaycompress", self.text)
-        self.assertIn("nocopytruncate", self.text)
-        self.assertNotIn("    copytruncate\n", self.text)
+        self.assertIn("install_xray_log_hygiene.sh", self.text)
+        self.assertIn("api restartlogger --server=${XRAY_CORE_API_SERVER}", log_hygiene)
+        self.assertIn("nodelaycompress", log_hygiene)
+        self.assertIn("nocopytruncate", log_hygiene)
+        self.assertNotIn("    copytruncate\n", log_hygiene)
         self.assertLess(
-            self.text.index("api restartlogger --server=${XRAY_CORE_API_SERVER}"),
-            self.text.index("|| systemctl restart vpnbot-xray.service"),
+            log_hygiene.index("api restartlogger --server=${XRAY_CORE_API_SERVER}"),
+            log_hygiene.index("|| systemctl restart ${XRAY_CORE_SERVICE_NAME}"),
         )
 
     def test_xray_main_path_installs_shared_node_disk_hygiene_last(self):

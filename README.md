@@ -113,6 +113,13 @@ configuration, protocol state or unknown log directories. All other VPnBot
 protocol installers use the same public installer so one VPS has one cleanup
 owner even when several protocols share it.
 
+Standalone Xray file logs have their own adapter,
+`scripts/install_xray_log_hygiene.sh`. It adds Xray `LoggerService`, validates
+the complete configuration, and installs move/create log rotation. The normal
+rotation reopens the file through Xray's loopback API; `copytruncate` is not
+used, so an already large access log is not copied to a second equally large
+file. A full Xray service restart is retained only as the failed-API fallback.
+
 SSH lockdown is intentionally not installed by this Xray installer by default.
 The canonical SSH bootstrap is the separate `sshsecurity.sh` gist and repo file.
 If the installer-local legacy SSH guard is explicitly enabled with

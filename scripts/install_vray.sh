@@ -1650,29 +1650,22 @@ EOF
 
 
 write_xray_logrotate_config() {
-    mkdir -p "$(dirname "${XRAY_LOGROTATE_FILE}")"
-    cat > "${XRAY_LOGROTATE_FILE}" <<EOF
-${XRAY_CORE_LOG_DIR}/*.log {
-    daily
-    rotate ${XRAY_LOGROTATE_DAYS}
-    maxsize ${XRAY_LOGROTATE_MAXSIZE}
-    missingok
-    notifempty
-    compress
-    nodelaycompress
-    nocopytruncate
-    create 0600 root root
-    sharedscripts
-    postrotate
-        if systemctl is-active --quiet vpnbot-xray.service; then
-            ${XRAY_CORE_BIN} api restartlogger --server=${XRAY_CORE_API_SERVER} >/dev/null 2>&1 \
-                || systemctl restart vpnbot-xray.service
-        fi
-    endscript
-}
-EOF
-    chmod 644 "${XRAY_LOGROTATE_FILE}" 2>/dev/null || true
-    log "Installed Xray logrotate policy: ${XRAY_LOGROTATE_FILE}"
+    local installer status
+    installer="$(mktemp /tmp/vpnbot-xray-log-hygiene-installer.XXXXXX)"
+    download_node_installer_asset "scripts/install_xray_log_hygiene.sh" "${installer}" 755
+    status=0
+    XRAY_CORE_ROOT="${XRAY_CORE_ROOT}" \
+    XRAY_CORE_BIN="${XRAY_CORE_BIN}" \
+    XRAY_CORE_CONFIG_DIR="${XRAY_CORE_CONFIG_DIR}" \
+    XRAY_CORE_LOG_DIR="${XRAY_CORE_LOG_DIR}" \
+    XRAY_CORE_API_SERVER="${XRAY_CORE_API_SERVER}" \
+    XRAY_CORE_SERVICE_NAME="${XRAY_CORE_SERVICE_NAME}" \
+    XRAY_LOGROTATE_FILE="${XRAY_LOGROTATE_FILE}" \
+    XRAY_LOGROTATE_DAYS="${XRAY_LOGROTATE_DAYS}" \
+    XRAY_LOGROTATE_MAXSIZE="${XRAY_LOGROTATE_MAXSIZE}" \
+        bash "${installer}" || status=$?
+    rm -f "${installer}"
+    return "${status}"
 }
 
 
@@ -2348,7 +2341,6 @@ with zipfile.ZipFile(archive_path) as zf:
 PY
 
     write_xray_core_base_configs
-    write_xray_logrotate_config
 
     install -m 755 "${extract_dir}/xray" "${XRAY_CORE_BIN}"
     if [[ -f "${extract_dir}/geoip.dat" ]]; then
@@ -2373,6 +2365,7 @@ PY
         err "Standalone Xray-core service failed to reach active state: ${XRAY_CORE_SERVICE_NAME}"
         exit 1
     fi
+    write_xray_logrotate_config
 
     XRAY_CORE_INSTALLED_VERSION="${release_tag}"
     if [[ -z "${XRAY_CORE_PUBLIC_ENDPOINT}" ]]; then
