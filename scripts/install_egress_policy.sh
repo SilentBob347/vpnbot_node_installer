@@ -33,7 +33,7 @@ install_packages() {
 }
 
 backup_existing() {
-    local path
+    local path relative destination
     BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d-%H%M%S)"
     install -d -m 0700 -o root -g root "${BACKUP_DIR}"
     for path in \
@@ -42,7 +42,10 @@ backup_existing() {
         /etc/3proxy/3proxy.cfg /etc/3proxy/users.lst /etc/3proxy/vpnbot-egress.acl /etc/systemd/system/3proxy.service
     do
         if [[ -e "${path}" ]]; then
-            cp -a --parents "${path}" "${BACKUP_DIR}"
+            relative="${path#/}"
+            destination="${BACKUP_DIR}/${relative}"
+            install -d -m 0700 -o root -g root "$(dirname -- "${destination}")"
+            cp -a -- "${path}" "${destination}"
         fi
     done
     iptables-save >"${BACKUP_DIR}/iptables.rules" 2>/dev/null || true

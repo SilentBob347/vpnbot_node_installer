@@ -110,6 +110,9 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         egress_installer = (REPO_ROOT / "scripts" / "install_egress_policy.sh").read_text(encoding="utf-8")
         self.assertIn("Requires=vpnbot-egress-dns.service", egress_installer)
         self.assertIn("ExecStopPost=${HELPER} --config ${CONFIG} disable-dns-redirect", egress_installer)
+        self.assertNotIn("cp -a --parents", egress_installer)
+        self.assertIn('relative="${path#/}"', egress_installer)
+        self.assertIn('cp -a -- "${path}" "${destination}"', egress_installer)
 
 
 class SharedEgressPolicyTests(unittest.TestCase):
