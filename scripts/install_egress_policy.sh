@@ -228,6 +228,7 @@ install_asset() {
         cp -- "${local_file}" "${temporary}"
     else
         curl -fsSL --retry 3 --connect-timeout 10 \
+            --max-time 90 \
             -H 'Cache-Control: no-cache' \
             "${BASE_URL%/}/${relative}?ts=$(date +%s)" -o "${temporary}"
     fi
