@@ -10,6 +10,7 @@ import ssl
 import subprocess
 import sys
 import time
+import zlib
 from copy import deepcopy
 from pathlib import Path
 
@@ -457,6 +458,24 @@ def restore_xray_inbounds_atomic(original_bytes: bytes) -> None:
             os.close(directory_fd)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def stable_inbound_id(inbound: dict) -> int:
+    """Match the public id emitted by vpnbot-xrayctl for one managed row."""
+
+    raw_id = inbound.get("id")
+    try:
+        value = int(raw_id)
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    key = (
+        f"{inbound.get('tag') or ''}|"
+        f"{inbound.get('port') or ''}|"
+        f"{inbound.get('protocol') or ''}"
+    )
+    return (zlib.crc32(key.encode("utf-8")) & 0x7FFFFFFF) or 1
 
 
 def parse_reserved_ports(raw: str) -> set[int]:
@@ -1285,7 +1304,7 @@ def retarget_reality_dest(inbound_id: int, requested_dest: str) -> int:
     matches = [
         row
         for row in current_rows
-        if isinstance(row, dict) and int(row.get("id") or 0) == wanted_id
+        if isinstance(row, dict) and stable_inbound_id(row) == wanted_id
     ]
     if len(matches) != 1:
         raise SystemExit(
@@ -1327,7 +1346,7 @@ def retarget_reality_dest(inbound_id: int, requested_dest: str) -> int:
     backup_path.chmod(0o600)
 
     updated_rows = deepcopy(current_rows)
-    updated = next(row for row in updated_rows if int(row.get("id") or 0) == wanted_id)
+    updated = next(row for row in updated_rows if stable_inbound_id(row) == wanted_id)
     updated["streamSettings"]["realitySettings"]["dest"] = normalized_dest
     try:
         save_xray_inbounds_atomic(updated_rows)

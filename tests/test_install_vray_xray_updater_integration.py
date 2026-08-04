@@ -837,7 +837,6 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
     @staticmethod
     def _row():
         return {
-            "id": 123,
             "tag": "[shared:443] reality",
             "port": 30001,
             "protocol": "vless",
@@ -879,7 +878,10 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
                 mock.patch.object(self.helper, "validate_and_restart_xray"),
                 mock.patch.object(self.helper.subprocess, "run"),
             ):
-                result = self.helper.retarget_reality_dest(123, "www.nvidia.com")
+                result = self.helper.retarget_reality_dest(
+                    self.helper.stable_inbound_id(self._row()),
+                    "www.nvidia.com",
+                )
 
             updated = json.loads(managed.read_text(encoding="utf-8"))
             expected = self._row()
@@ -914,7 +916,10 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
                 mock.patch.object(self.helper.subprocess, "run"),
             ):
                 with self.assertRaisesRegex(SystemExit, "managed file"):
-                    self.helper.retarget_reality_dest(123, "www.nvidia.com")
+                    self.helper.retarget_reality_dest(
+                        self.helper.stable_inbound_id(self._row()),
+                        "www.nvidia.com",
+                    )
 
             self.assertEqual(original_bytes, managed.read_bytes())
 
@@ -931,7 +936,16 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
             mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
         ):
             with self.assertRaisesRegex(SystemExit, "не использует REALITY"):
-                self.helper.retarget_reality_dest(123, "www.nvidia.com")
+                self.helper.retarget_reality_dest(
+                    self.helper.stable_inbound_id(row),
+                    "www.nvidia.com",
+                )
+
+    def test_retarget_uses_same_derived_id_as_xrayctl(self):
+        row = self._row()
+        self.assertNotIn("id", row)
+        expected = 266617217
+        self.assertEqual(expected, self.helper.stable_inbound_id(row))
 
 
 if __name__ == "__main__":
