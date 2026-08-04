@@ -185,6 +185,8 @@ class SharedEgressPolicyTests(unittest.TestCase):
             lines = path.read_text(encoding="utf-8").splitlines()
 
         self.assertLess(lines.index("direct(suffix:donatepay.ru)"), lines.index("reject(suffix:ru)"))
+        self.assertLess(lines.index("direct(suffix:loopy.ru)"), lines.index("reject(suffix:ru)"))
+        self.assertIn("direct(suffix:championat.com)", lines)
         self.assertLess(lines.index("reject(geosite:category-ru)"), lines.index("reject(geoip:ru)"))
         self.assertEqual(lines[-1], "direct(all)")
 
@@ -216,6 +218,8 @@ class SharedEgressPolicyTests(unittest.TestCase):
         exception = next(i for i, line in enumerate(lines) if line.startswith("server=/donatepay.ru/1.1.1.1"))
         blocked = lines.index("server=/ru/")
         self.assertLess(exception, blocked)
+        self.assertLess(lines.index("server=/loopy.ru/1.1.1.1"), blocked)
+        self.assertIn("server=/championat.com/1.1.1.1", lines)
         self.assertIn("# Protected tunnel interfaces: awg0,wg0", lines)
         self.assertIn("pid-file=", lines)
         self.assertIn("bind-interfaces", lines)
@@ -303,6 +307,8 @@ class SharedEgressPolicyTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
 
         self.assertIn("allow * * donatepay.ru,*.donatepay.ru", text)
+        self.assertIn("allow * * loopy.ru,*.loopy.ru", text)
+        self.assertIn("allow * * championat.com,*.championat.com", text)
         self.assertIn("deny * * ru,*.ru", text)
         self.assertTrue(text.rstrip().endswith("allow *"))
 
@@ -658,6 +664,8 @@ class XrayRouteHealRulesTests(unittest.TestCase):
 
         self.assertTrue(summary["enabled"])
         self.assertIn("domain:donatepay.ru", summary["allow_domains"])
+        self.assertIn("domain:loopy.ru", summary["allow_domains"])
+        self.assertIn("domain:championat.com", summary["allow_domains"])
         self.assertNotIn("domain:legacy.example", summary["allow_domains"])
         self.assertNotIn("domain:legacy-block.example", summary["domains"])
 
