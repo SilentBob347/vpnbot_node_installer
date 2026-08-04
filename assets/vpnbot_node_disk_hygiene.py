@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded cleanup of reproducible node cache and archived systemd journals."""
+"""Bounded cleanup of node cache, journals and VPnBot-owned file logs."""
 
 from __future__ import annotations
 
@@ -21,8 +21,10 @@ DEFAULT_CONFIG = Path("/etc/vpnbot/node-disk-hygiene.json")
 DEFAULT_STATE_DIR = Path("/var/lib/vpnbot-node-disk-hygiene")
 DEFAULT_LOCK = Path("/run/vpnbot-node-disk-hygiene.lock")
 APT_ARCHIVES = Path("/var/cache/apt/archives")
+TRUSTED_PROTOCOL_LOGROTATE_DIR = Path("/etc/vpnbot/logrotate.d")
 SIZE_RE = re.compile(r"^[1-9][0-9]*(?:K|M|G|T|P|E)?$")
 TIME_RE = re.compile(r"^[1-9][0-9]*(?:s|min|h|day|week|month|year)s?$")
+CONFIG_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 def utc_now() -> str:
@@ -42,16 +44,17 @@ def load_config(path: Path) -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: expected a JSON object")
-    if raw.get("schema_version") != 1:
+    if raw.get("schema_version") != 2:
         raise ValueError(f"{path}: unsupported schema_version")
-    if raw.get("policy_id") != "vpnbot-node-disk-hygiene-v1":
+    if raw.get("policy_id") != "vpnbot-node-disk-hygiene-v2":
         raise ValueError(f"{path}: unexpected policy_id")
 
     apt = raw.get("apt")
     journal = raw.get("journal")
+    protocol_logrotate = raw.get("protocol_logrotate")
     timer = raw.get("timer")
-    if not isinstance(apt, dict) or not isinstance(journal, dict) or not isinstance(timer, dict):
-        raise ValueError(f"{path}: apt, journal and timer must be objects")
+    if not all(isinstance(item, dict) for item in (apt, journal, protocol_logrotate, timer)):
+        raise ValueError(f"{path}: apt, journal, protocol_logrotate and timer must be objects")
     if apt.get("clean_archives") is not True:
         raise ValueError(f"{path}: apt.clean_archives must be true")
     timeout = apt.get("lock_timeout_seconds")
@@ -75,6 +78,8 @@ def load_config(path: Path) -> dict[str, Any]:
     for key in ("on_boot_sec", "on_unit_active_sec", "randomized_delay_sec"):
         if not isinstance(timer.get(key), str) or not TIME_RE.fullmatch(timer[key]):
             raise ValueError(f"{path}: timer.{key} has an invalid duration")
+    if protocol_logrotate.get("config_dir") != str(TRUSTED_PROTOCOL_LOGROTATE_DIR):
+        raise ValueError(f"{path}: protocol_logrotate.config_dir must use the trusted VPnBot directory")
     return raw
 
 
@@ -157,6 +162,44 @@ def apt_archive_bytes(path: Path = APT_ARCHIVES) -> int:
     return total
 
 
+def owned_logrotate_configs(path: Path) -> list[Path]:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return []
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise ValueError(f"{path}: expected a real directory")
+    if os.geteuid() == 0 and metadata.st_uid != 0:
+        raise ValueError(f"{path}: expected root ownership")
+    if metadata.st_mode & 0o022:
+        raise ValueError(f"{path}: group/other writable directory is unsafe")
+
+    result: list[Path] = []
+    for entry in sorted(path.iterdir(), key=lambda item: item.name):
+        if not CONFIG_NAME_RE.fullmatch(entry.name):
+            raise ValueError(f"{entry}: invalid owned logrotate config name")
+        item = entry.lstat()
+        if not stat.S_ISREG(item.st_mode) or stat.S_ISLNK(item.st_mode):
+            raise ValueError(f"{entry}: expected a regular file")
+        if os.geteuid() == 0 and item.st_uid != 0:
+            raise ValueError(f"{entry}: expected root ownership")
+        if item.st_mode & 0o022:
+            raise ValueError(f"{entry}: group/other writable config is unsafe")
+        result.append(entry)
+    return result
+
+
+def apply_protocol_logrotate(config: dict[str, Any]) -> dict[str, Any]:
+    configs = owned_logrotate_configs(Path(config["protocol_logrotate"]["config_dir"]))
+    if not configs:
+        return {"ok": True, "skipped": "no-owned-configs", "configs": {}}
+    logrotate = shutil.which("logrotate")
+    if not logrotate:
+        return {"ok": False, "error": "logrotate-not-installed", "configs": {}}
+    results = {item.name: run([logrotate, str(item)], timeout=180) for item in configs}
+    return {"ok": all(bool(item.get("ok")) for item in results.values()), "configs": results}
+
+
 def write_report(state_dir: Path, report: dict[str, Any]) -> None:
     state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     metadata = state_dir.lstat()
@@ -223,9 +266,11 @@ def apply(config: dict[str, Any], *, state_dir: Path, lock_path: Path) -> dict[s
             operations["journal_rotate"] = {"ok": True, "skipped": "journalctl-not-installed"}
             operations["journal_vacuum"] = {"ok": True, "skipped": "journalctl-not-installed"}
 
+        operations["protocol_logrotate"] = apply_protocol_logrotate(config)
+
         after = root_filesystem()
         report = {
-            "schema_version": 1,
+            "schema_version": config["schema_version"],
             "policy_id": config["policy_id"],
             "finished_at": utc_now(),
             "filesystem_before": before,

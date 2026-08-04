@@ -8,9 +8,12 @@ XRAY_CORE_API_FILE="${XRAY_CORE_API_FILE:-${XRAY_CORE_CONFIG_DIR}/30_api.json}"
 XRAY_CORE_LOG_DIR="${XRAY_CORE_LOG_DIR:-${XRAY_CORE_ROOT}/logs}"
 XRAY_CORE_API_SERVER="${XRAY_CORE_API_SERVER:-127.0.0.1:10085}"
 XRAY_CORE_SERVICE_NAME="${XRAY_CORE_SERVICE_NAME:-vpnbot-xray.service}"
-XRAY_LOGROTATE_FILE="${XRAY_LOGROTATE_FILE:-/etc/logrotate.d/vpnbot-xray}"
-XRAY_LOGROTATE_DAYS="${XRAY_LOGROTATE_DAYS:-7}"
-XRAY_LOGROTATE_MAXSIZE="${XRAY_LOGROTATE_MAXSIZE:-100M}"
+BASE_URL="${VPNBOT_NODE_INSTALLER_BASE_URL:-https://raw.githubusercontent.com/youtubediscord/vpnbot_node_installer/refs/heads/main}"
+XRAY_LOGROTATE_FILE="${XRAY_LOGROTATE_FILE:-/etc/vpnbot/logrotate.d/xray}"
+XRAY_LEGACY_LOGROTATE_FILE="/etc/logrotate.d/vpnbot-xray"
+XRAY_LOGROTATE_DAYS="${XRAY_LOGROTATE_DAYS:-3}"
+XRAY_LOGROTATE_MAXAGE_DAYS="${XRAY_LOGROTATE_MAXAGE_DAYS:-3}"
+XRAY_LOGROTATE_MAXSIZE="${XRAY_LOGROTATE_MAXSIZE:-64M}"
 BACKUP_ROOT="${VPNBOT_XRAY_LOG_HYGIENE_BACKUP_ROOT:-/var/backups/vpnbot-xray-log-hygiene}"
 WORK_DIR="$(mktemp -d /tmp/vpnbot-xray-log-hygiene.XXXXXX)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -19,6 +22,7 @@ ROLLBACK_REQUIRED=0
 SERVICE_WAS_ACTIVE=0
 API_EXISTED=0
 LOGROTATE_EXISTED=0
+LEGACY_LOGROTATE_EXISTED=0
 
 log() { printf '[vpnbot-xray-log-hygiene] %s\n' "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
@@ -41,6 +45,9 @@ rollback() {
         else
             rm -f -- "${XRAY_LOGROTATE_FILE}" || true
         fi
+        if (( LEGACY_LOGROTATE_EXISTED == 1 )); then
+            install -m 0644 -o root -g root "${BACKUP_DIR}/legacy-vpnbot-xray" "${XRAY_LEGACY_LOGROTATE_FILE}" || true
+        fi
         if (( SERVICE_WAS_ACTIVE == 1 )); then
             systemctl restart "${XRAY_CORE_SERVICE_NAME}" || true
         fi
@@ -53,8 +60,9 @@ trap rollback EXIT
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "run as root"
 [[ "${XRAY_CORE_BIN}" == /* && "${XRAY_CORE_CONFIG_DIR}" == /* && "${XRAY_CORE_LOG_DIR}" == /* ]] \
     || die "Xray paths must be absolute"
-[[ "${XRAY_LOGROTATE_FILE}" == /etc/logrotate.d/* ]] || die "unsafe logrotate target"
+[[ "${XRAY_LOGROTATE_FILE}" == /etc/vpnbot/logrotate.d/* ]] || die "unsafe logrotate target"
 [[ "${XRAY_LOGROTATE_DAYS}" =~ ^[1-9][0-9]*$ ]] || die "invalid rotate count"
+[[ "${XRAY_LOGROTATE_MAXAGE_DAYS}" =~ ^[1-9][0-9]*$ ]] || die "invalid max age"
 [[ "${XRAY_LOGROTATE_MAXSIZE}" =~ ^[1-9][0-9]*(k|M|G|T)?$ ]] || die "invalid maxsize"
 [[ "${XRAY_CORE_API_SERVER}" =~ ^(127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}$ ]] \
     || die "Xray logger API must use a loopback endpoint"
@@ -62,10 +70,27 @@ trap rollback EXIT
 [[ -f "${XRAY_CORE_API_FILE}" ]] || die "Xray API config is missing: ${XRAY_CORE_API_FILE}"
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 command -v logrotate >/dev/null 2>&1 || die "logrotate is required"
+command -v curl >/dev/null 2>&1 || die "curl is required"
+
+download_asset() {
+    local relative="$1"
+    local target="$2"
+    local local_root="${VPNBOT_NODE_INSTALLER_LOCAL_ROOT:-}"
+    if [[ -n "${local_root}" && -f "${local_root%/}/${relative}" ]]; then
+        install -m 0644 "${local_root%/}/${relative}" "${target}"
+        return 0
+    fi
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 90 \
+        -H 'Cache-Control: no-cache' \
+        "${BASE_URL%/}/${relative}?ts=$(date +%s)" -o "${target}"
+}
 
 mkdir -p "${WORK_DIR}/candidate" "${BACKUP_ROOT}" "$(dirname "${XRAY_LOGROTATE_FILE}")"
 chmod 0700 "${BACKUP_ROOT}"
+chmod 0755 "$(dirname "${XRAY_LOGROTATE_FILE}")"
 cp -a -- "${XRAY_CORE_API_FILE}" "${WORK_DIR}/candidate/30_api.json"
+download_asset assets/vpnbot_log_archive_pruner.py "${WORK_DIR}/pruner.py"
+chmod 0755 "${WORK_DIR}/pruner.py"
 
 python3 - "${WORK_DIR}/candidate/30_api.json" <<'PY'
 import json
@@ -99,6 +124,7 @@ cat >"${WORK_DIR}/candidate/vpnbot-xray" <<EOF
 ${XRAY_CORE_LOG_DIR}/*.log {
     daily
     rotate ${XRAY_LOGROTATE_DAYS}
+    maxage ${XRAY_LOGROTATE_MAXAGE_DAYS}
     maxsize ${XRAY_LOGROTATE_MAXSIZE}
     missingok
     notifempty
@@ -127,6 +153,9 @@ cmp -s -- "${XRAY_CORE_API_FILE}" "${WORK_DIR}/candidate/30_api.json" || api_cha
 if [[ ! -e "${XRAY_LOGROTATE_FILE}" ]] || ! cmp -s -- "${XRAY_LOGROTATE_FILE}" "${WORK_DIR}/candidate/vpnbot-xray"; then
     logrotate_changed=1
 fi
+if [[ -e "${XRAY_LEGACY_LOGROTATE_FILE}" ]]; then
+    logrotate_changed=1
+fi
 
 if systemctl is-active --quiet "${XRAY_CORE_SERVICE_NAME}"; then
     SERVICE_WAS_ACTIVE=1
@@ -143,9 +172,14 @@ if (( api_changed == 1 || logrotate_changed == 1 )); then
         LOGROTATE_EXISTED=1
         cp -a -- "${XRAY_LOGROTATE_FILE}" "${BACKUP_DIR}/vpnbot-xray"
     fi
+    if [[ -e "${XRAY_LEGACY_LOGROTATE_FILE}" ]]; then
+        LEGACY_LOGROTATE_EXISTED=1
+        cp -a -- "${XRAY_LEGACY_LOGROTATE_FILE}" "${BACKUP_DIR}/legacy-vpnbot-xray"
+    fi
     ROLLBACK_REQUIRED=1
     install -m 0644 -o root -g root "${WORK_DIR}/candidate/30_api.json" "${XRAY_CORE_API_FILE}"
     install -m 0644 -o root -g root "${WORK_DIR}/candidate/vpnbot-xray" "${XRAY_LOGROTATE_FILE}"
+    rm -f -- "${XRAY_LEGACY_LOGROTATE_FILE}"
 fi
 
 XRAY_LOCATION_ASSET="${XRAY_CORE_ROOT}/share" \
@@ -160,6 +194,20 @@ if (( SERVICE_WAS_ACTIVE == 1 )); then
     "${XRAY_CORE_BIN}" api restartlogger --server="${XRAY_CORE_API_SERVER}" >/dev/null
 fi
 
+pruned_files=0
+pruned_bytes=0
+while IFS= read -r -d '' active_log; do
+    prune_output="$(python3 "${WORK_DIR}/pruner.py" \
+        --active-log "${active_log}" \
+        --allowed-root "${XRAY_CORE_LOG_DIR}" \
+        --rotate-count "${XRAY_LOGROTATE_DAYS}" \
+        --max-age-days "${XRAY_LOGROTATE_MAXAGE_DAYS}")"
+    read -r deleted_files deleted_bytes < <(python3 -c 'import json,sys; item=json.load(sys.stdin); print(item["deleted_files"], item["deleted_bytes"])' <<<"${prune_output}")
+    pruned_files=$(( pruned_files + deleted_files ))
+    pruned_bytes=$(( pruned_bytes + deleted_bytes ))
+done < <(find "${XRAY_CORE_LOG_DIR}" -maxdepth 1 -type f -name '*.log' -print0)
+logrotate "${XRAY_LOGROTATE_FILE}"
+
 mapfile -t backups < <(find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d \
     -name '20??????T??????Z' -printf '%f\n' | sort)
 if (( ${#backups[@]} > 3 )); then
@@ -172,4 +220,4 @@ if (( ${#backups[@]} > 3 )); then
 fi
 
 ROLLBACK_REQUIRED=0
-log "installed; api_changed=${api_changed}; logrotate_changed=${logrotate_changed}; service_active=${SERVICE_WAS_ACTIVE}"
+log "installed; api_changed=${api_changed}; logrotate_changed=${logrotate_changed}; service_active=${SERVICE_WAS_ACTIVE}; pruned_files=${pruned_files}; pruned_bytes=${pruned_bytes}"

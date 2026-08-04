@@ -1,7 +1,9 @@
 from pathlib import Path
 import importlib
 import json
+import os
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -47,6 +49,11 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn("api restartlogger --server=${XRAY_CORE_API_SERVER}", log_hygiene)
         self.assertIn("nodelaycompress", log_hygiene)
         self.assertIn("nocopytruncate", log_hygiene)
+        self.assertIn('XRAY_LOGROTATE_DAYS="${XRAY_LOGROTATE_DAYS:-3}"', log_hygiene)
+        self.assertIn('XRAY_LOGROTATE_MAXAGE_DAYS="${XRAY_LOGROTATE_MAXAGE_DAYS:-3}"', log_hygiene)
+        self.assertIn('XRAY_LOGROTATE_MAXSIZE="${XRAY_LOGROTATE_MAXSIZE:-64M}"', log_hygiene)
+        self.assertIn('/etc/vpnbot/logrotate.d/xray', log_hygiene)
+        self.assertIn('rm -f -- "${XRAY_LEGACY_LOGROTATE_FILE}"', log_hygiene)
         self.assertNotIn("    copytruncate\n", log_hygiene)
         self.assertLess(
             log_hygiene.index("api restartlogger --server=${XRAY_CORE_API_SERVER}"),
@@ -354,10 +361,10 @@ class NodeDiskHygieneTests(unittest.TestCase):
         journald = self.helper.render_journald(self.config)
         timer = self.helper.render_timer(self.config)
 
-        self.assertIn("SystemMaxUse=512M", journald)
-        self.assertIn("SystemKeepFree=1G", journald)
-        self.assertIn("MaxRetentionSec=14day", journald)
-        self.assertIn("OnUnitActiveSec=6h", timer)
+        self.assertIn("SystemMaxUse=256M", journald)
+        self.assertIn("SystemKeepFree=2G", journald)
+        self.assertIn("MaxRetentionSec=7day", journald)
+        self.assertIn("OnUnitActiveSec=1h", timer)
         self.assertIn("Persistent=true", timer)
 
     def test_installer_owns_only_reproducible_cache_and_archived_journal_cleanup(self):
@@ -368,6 +375,8 @@ class NodeDiskHygieneTests(unittest.TestCase):
         self.assertIn('"--rotate"', helper)
         self.assertIn('f"--vacuum-time=', helper)
         self.assertIn('f"--vacuum-size=', helper)
+        self.assertIn('operations["protocol_logrotate"]', helper)
+        self.assertIn('/etc/vpnbot/logrotate.d', helper)
         self.assertNotIn("autoremove", installer + helper)
         self.assertNotIn("/opt/vpnbot/xray-core/logs", installer + helper)
         self.assertNotIn("/var/log/awg", installer + helper)
@@ -392,7 +401,11 @@ class NodeDiskHygieneTests(unittest.TestCase):
                 {"total_bytes": 100, "used_bytes": 90, "free_bytes": 10},
                 {"total_bytes": 100, "used_bytes": 80, "free_bytes": 20},
             ],
-        ), mock.patch.object(self.helper, "apt_archive_bytes", side_effect=[8, 0]):
+        ), mock.patch.object(self.helper, "apt_archive_bytes", side_effect=[8, 0]), mock.patch.object(
+            self.helper,
+            "apply_protocol_logrotate",
+            return_value={"ok": True, "configs": {}},
+        ):
             root = Path(raw_tmp)
             report = self.helper.apply(
                 self.config,
@@ -402,7 +415,74 @@ class NodeDiskHygieneTests(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["freed_bytes"], 10)
-        self.assertEqual([item[-1] for item in calls], ["clean", "--rotate", "--vacuum-size=512M"])
+        self.assertEqual([item[-1] for item in calls], ["clean", "--rotate", "--vacuum-size=256M"])
+
+    def test_owned_protocol_configs_are_sorted_and_symlinks_fail_closed(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            os.chmod(root, 0o755)
+            (root / "xray").write_text("x\n", encoding="utf-8")
+            (root / "awg").write_text("a\n", encoding="utf-8")
+            self.assertEqual([item.name for item in self.helper.owned_logrotate_configs(root)], ["awg", "xray"])
+            (root / "unsafe").symlink_to(root / "awg")
+            with self.assertRaisesRegex(ValueError, "expected a regular file"):
+                self.helper.owned_logrotate_configs(root)
+
+    def test_protocol_logrotate_uses_only_owned_directory_entries(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            os.chmod(root, 0o755)
+            (root / "awg").write_text("a\n", encoding="utf-8")
+            with mock.patch.object(self.helper.shutil, "which", return_value="/usr/sbin/logrotate"), mock.patch.object(
+                self.helper,
+                "run",
+                side_effect=lambda argv, *, timeout: calls.append((argv, timeout)) or {"ok": True, "returncode": 0},
+            ):
+                result = self.helper.apply_protocol_logrotate(
+                    {"protocol_logrotate": {"config_dir": str(root)}}
+                )
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, [(["/usr/sbin/logrotate", str(root / "awg")], 180)])
+
+
+class OwnedLogArchivePrunerTests(unittest.TestCase):
+    def setUp(self):
+        self.pruner = importlib.import_module("assets.vpnbot_log_archive_pruner")
+
+    def test_prunes_excess_and_expired_numbered_archives_only(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            active = root / "access.log"
+            active.write_bytes(b"active")
+            recent = root / "access.log.1.gz"
+            expired = root / "access.log.2.gz"
+            excess = root / "access.log.4.gz"
+            unrelated = root / "other.log.9.gz"
+            for path in (recent, expired, excess, unrelated):
+                path.write_bytes(b"archive")
+            old = time.time() - 10 * 86400
+            os.utime(expired, (old, old))
+
+            report = self.pruner.prune(active, allowed_root=root, rotate_count=3, max_age_days=3)
+
+            self.assertEqual(report["deleted_files"], 2)
+            self.assertTrue(active.exists())
+            self.assertTrue(recent.exists())
+            self.assertFalse(expired.exists())
+            self.assertFalse(excess.exists())
+            self.assertTrue(unrelated.exists())
+
+
+class AwgLogHygieneAdapterTests(unittest.TestCase):
+    def test_adapter_has_small_bounded_retention_and_removes_legacy_source(self):
+        source = (REPO_ROOT / "scripts" / "install_awg_log_hygiene.sh").read_text(encoding="utf-8")
+        self.assertIn('AWG_LOGROTATE_COUNT="${AWG_LOGROTATE_COUNT:-3}"', source)
+        self.assertIn('AWG_LOGROTATE_MAXAGE_DAYS="${AWG_LOGROTATE_MAXAGE_DAYS:-3}"', source)
+        self.assertIn('AWG_LOGROTATE_MAXSIZE="${AWG_LOGROTATE_MAXSIZE:-64M}"', source)
+        self.assertIn('/etc/vpnbot/logrotate.d/awg-conntrack-logger', source)
+        self.assertIn('rm -f -- "${AWG_LEGACY_LOGROTATE_FILE}"', source)
+        self.assertIn("vpnbot_log_archive_pruner.py", source)
 
 
 class XrayRouteHealRulesTests(unittest.TestCase):

@@ -5,6 +5,7 @@ BASE_URL="${VPNBOT_NODE_INSTALLER_BASE_URL:-https://raw.githubusercontent.com/yo
 CONFIG_FILE="/etc/vpnbot/node-disk-hygiene.json"
 HELPER_FILE="/usr/local/sbin/vpnbot-node-disk-hygiene"
 JOURNAL_DROPIN="/etc/systemd/journald.conf.d/60-vpnbot-node-disk-hygiene.conf"
+PROTOCOL_LOGROTATE_DIR="/etc/vpnbot/logrotate.d"
 SERVICE_FILE="/etc/systemd/system/vpnbot-node-disk-hygiene.service"
 TIMER_FILE="/etc/systemd/system/vpnbot-node-disk-hygiene.timer"
 BACKUP_ROOT="/var/backups/vpnbot-node-disk-hygiene"
@@ -72,8 +73,8 @@ RestrictSUIDSGID=true
 WantedBy=multi-user.target
 EOF
 
-mkdir -p /etc/vpnbot "$(dirname "${JOURNAL_DROPIN}")" "${BACKUP_ROOT}"
-chmod 0755 /etc/vpnbot "${BACKUP_ROOT}"
+mkdir -p /etc/vpnbot "$(dirname "${JOURNAL_DROPIN}")" "${PROTOCOL_LOGROTATE_DIR}" "${BACKUP_ROOT}"
+chmod 0755 /etc/vpnbot "${PROTOCOL_LOGROTATE_DIR}" "${BACKUP_ROOT}"
 
 backup_dir="${BACKUP_ROOT}/${STAMP}"
 changed=0

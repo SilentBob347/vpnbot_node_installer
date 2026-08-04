@@ -106,12 +106,13 @@ at the same moment. The updater writes events to
 
 Every standalone install also applies the shared physical-node disk policy from
 `assets/vpnbot_node_disk_hygiene.json`. The persistent
-`vpnbot-node-disk-hygiene.timer` periodically removes only reproducible APT
-package archives and rotates/vacuums archived systemd journals within fixed
-size and age limits. It never scans or deletes VPN databases, credentials,
-configuration, protocol state or unknown log directories. All other VPnBot
-protocol installers use the same public installer so one VPS has one cleanup
-owner even when several protocols share it.
+`vpnbot-node-disk-hygiene.timer` runs hourly, removes only reproducible APT
+package archives, rotates/vacuums archived systemd journals within fixed size
+and age limits, and executes only root-owned protocol rotation adapters from
+`/etc/vpnbot/logrotate.d`. It never scans or deletes VPN databases,
+credentials, configuration, protocol state or unknown log directories. All
+other VPnBot protocol installers use the same public installer so one VPS has
+one cleanup scheduler even when several protocols share it.
 
 Standalone Xray file logs have their own adapter,
 `scripts/install_xray_log_hygiene.sh`. It adds Xray `LoggerService`, validates
@@ -119,6 +120,10 @@ the complete configuration, and installs move/create log rotation. The normal
 rotation reopens the file through Xray's loopback API; `copytruncate` is not
 used, so an already large access log is not copied to a second equally large
 file. A full Xray service restart is retained only as the failed-API fallback.
+AWG uses the sibling `scripts/install_awg_log_hygiene.sh` adapter. Both adapters
+keep at most three archives for at most three days, cap active files at 64 MiB,
+prune excess numbered archives immediately during migration, and remove their
+legacy `/etc/logrotate.d` entries after the new trusted configuration validates.
 
 SSH lockdown is intentionally not installed by this Xray installer by default.
 The canonical SSH bootstrap is the separate `sshsecurity.sh` gist and repo file.

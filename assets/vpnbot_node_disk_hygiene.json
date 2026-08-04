@@ -1,25 +1,28 @@
 {
-  "schema_version": 1,
-  "policy_id": "vpnbot-node-disk-hygiene-v1",
+  "schema_version": 2,
+  "policy_id": "vpnbot-node-disk-hygiene-v2",
   "apt": {
     "clean_archives": true,
     "lock_timeout_seconds": 30
   },
   "journal": {
-    "system_max_use": "512M",
-    "system_keep_free": "1G",
-    "system_max_file_size": "64M",
-    "runtime_max_use": "128M",
-    "runtime_keep_free": "256M",
-    "runtime_max_file_size": "32M",
-    "max_retention_sec": "14day",
-    "max_file_sec": "1day",
-    "vacuum_size": "512M",
-    "vacuum_time": "14day"
+    "system_max_use": "256M",
+    "system_keep_free": "2G",
+    "system_max_file_size": "32M",
+    "runtime_max_use": "64M",
+    "runtime_keep_free": "512M",
+    "runtime_max_file_size": "16M",
+    "max_retention_sec": "7day",
+    "max_file_sec": "12h",
+    "vacuum_size": "256M",
+    "vacuum_time": "7day"
+  },
+  "protocol_logrotate": {
+    "config_dir": "/etc/vpnbot/logrotate.d"
   },
   "timer": {
-    "on_boot_sec": "10min",
-    "on_unit_active_sec": "6h",
-    "randomized_delay_sec": "30min"
+    "on_boot_sec": "5min",
+    "on_unit_active_sec": "1h",
+    "randomized_delay_sec": "10min"
   }
 }
