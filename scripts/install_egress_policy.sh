@@ -123,17 +123,16 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    if systemctl is-enabled --quiet 3proxy.service || systemctl is-active --quiet 3proxy.service; then
-        if ! systemctl restart 3proxy.service || ! systemctl is-active --quiet 3proxy.service; then
-            saved_config="${BACKUP_DIR}${config}"
-            saved_unit="${BACKUP_DIR}${unit}"
-            [[ -f "${saved_config}" && -f "${saved_unit}" ]] || die "3proxy migration failed and rollback files are missing"
-            cp -a "${saved_config}" "${config}"
-            cp -a "${saved_unit}" "${unit}"
-            systemctl daemon-reload
-            systemctl restart 3proxy.service || true
-            die "3proxy rejected the managed ACL; original config and unit were restored"
-        fi
+    systemctl enable 3proxy.service >/dev/null
+    if ! systemctl restart 3proxy.service || ! systemctl is-active --quiet 3proxy.service; then
+        saved_config="${BACKUP_DIR}${config}"
+        saved_unit="${BACKUP_DIR}${unit}"
+        [[ -f "${saved_config}" && -f "${saved_unit}" ]] || die "3proxy migration failed and rollback files are missing"
+        cp -a "${saved_config}" "${config}"
+        cp -a "${saved_unit}" "${unit}"
+        systemctl daemon-reload
+        systemctl restart 3proxy.service || true
+        die "3proxy rejected the managed ACL; original config and unit were restored"
     fi
 }
 
