@@ -29,7 +29,7 @@ require_root() {
 install_packages() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null
-    apt-get install -y --no-install-recommends python3 curl ipset iptables dnsmasq-base >/dev/null
+    apt-get install -y --no-install-recommends python3 curl ipset iptables dnsmasq-base dnsutils >/dev/null
 }
 
 backup_existing() {
@@ -56,6 +56,10 @@ backup_existing() {
 prepare_3proxy_adapter() {
     [[ -f /etc/3proxy/3proxy.cfg ]] || return 0
     command -v 3proxy >/dev/null 2>&1 || return 0
+    if ! grep -Fq '# BEGIN VPnBot managed egress policy' /etc/3proxy/3proxy.cfg; then
+        log "Leaving foreign 3proxy configuration outside VPnBot policy ownership"
+        return 0
+    fi
     if ! id vpnbot-socks >/dev/null 2>&1; then
         useradd --system --no-create-home --shell /usr/sbin/nologin vpnbot-socks
     fi
@@ -71,6 +75,9 @@ activate_3proxy_adapter() {
     [[ -f "${config}" ]] || return 0
     binary="$(command -v 3proxy || true)"
     [[ -n "${binary}" ]] || return 0
+    if ! grep -Fq '# BEGIN VPnBot managed egress policy' "${config}"; then
+        return 0
+    fi
 
     "${HELPER}" --config "${CONFIG}" reconcile-3proxy-config \
         "${config}" --acl /etc/3proxy/vpnbot-egress.acl
@@ -125,26 +132,64 @@ install_hysteria_adapter() {
     local acl="/etc/hysteria/vpnbot-egress.acl"
     local geoip="/etc/hysteria/geoip.dat"
     local geosite="/etc/hysteria/geosite.dat"
-    local field target url temporary
+    local field target url temporary downloaded urls candidate
     [[ -f "${hysteria_config}" ]] || return 0
     command -v hysteria >/dev/null 2>&1 || return 0
 
     for field in geoip geosite; do
         target="/etc/hysteria/${field}.dat"
-        url="$(python3 - "${CONFIG}" "${field}_url" <<'PY'
+        if [[ -f "${target}" && "$(stat -c %s "${target}")" -ge 100000 ]]; then
+            log "Retaining the existing validated Hysteria ${field} database"
+            continue
+        fi
+        downloaded=0
+        for candidate in \
+            "/opt/vpnbot/xray-core/share/${field}.dat" \
+            "/usr/local/share/xray/${field}.dat" \
+            "/usr/share/xray/${field}.dat"
+        do
+            if [[ -f "${candidate}" && "$(stat -c %s "${candidate}")" -ge 100000 ]]; then
+                install -m 0644 -o root -g root "${candidate}" "${target}"
+                downloaded=1
+                log "Seeded Hysteria ${field} database from ${candidate}"
+                break
+            fi
+        done
+        if [[ "${downloaded}" -eq 1 ]]; then
+            continue
+        fi
+        urls="$(python3 - "${CONFIG}" "${field}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-print(payload["hysteria"][sys.argv[2]])
+field = sys.argv[2]
+hysteria = payload["hysteria"]
+print(hysteria[f"{field}_url"])
+for url in hysteria.get(f"{field}_fallback_urls", []):
+    print(url)
 PY
 )"
         temporary="$(mktemp)"
-        curl -fsSL --retry 3 --connect-timeout 10 "${url}" -o "${temporary}"
-        [[ "$(stat -c %s "${temporary}")" -ge 100000 ]] || die "Hysteria ${field} database is unexpectedly small"
-        install -m 0644 -o root -g root "${temporary}" "${target}"
+        while IFS= read -r url; do
+            [[ -n "${url}" ]] || continue
+            if curl -fsSL --connect-timeout 10 --max-time 90 "${url}" -o "${temporary}" \
+                && [[ "$(stat -c %s "${temporary}")" -ge 100000 ]]; then
+                install -m 0644 -o root -g root "${temporary}" "${target}"
+                downloaded=1
+                break
+            fi
+            log "Hysteria ${field} database download failed via ${url}; trying fallback"
+        done <<<"${urls}"
         rm -f "${temporary}"
+        if [[ "${downloaded}" -ne 1 ]]; then
+            if [[ -f "${target}" && "$(stat -c %s "${target}")" -ge 100000 ]]; then
+                log "Hysteria ${field} sources are unavailable; retaining the existing validated database"
+            else
+                die "Hysteria ${field} database is unavailable and no validated local copy exists"
+            fi
+        fi
     done
 
     "${HELPER}" --config "${CONFIG}" render-hysteria-acl "${acl}"
@@ -252,12 +297,14 @@ from pathlib import Path
 
 print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["dns_redirect_port"])
 PY
-)"
+    )"
     systemctl daemon-reload
     systemctl enable vpnbot-egress-dns.service >/dev/null
+    systemctl stop vpnbot-egress-policy.service >/dev/null 2>&1 || true
+    systemctl stop vpnbot-egress-dns.service >/dev/null 2>&1 || true
     systemctl reset-failed vpnbot-egress-dns.service >/dev/null 2>&1 || true
-    systemctl restart vpnbot-egress-dns.service
-    for attempt in $(seq 1 20); do
+    systemctl start vpnbot-egress-dns.service || true
+    for attempt in $(seq 1 80); do
         if systemctl is-active --quiet vpnbot-egress-dns.service \
             && ss -H -lun | grep -q ":${dns_port}" \
             && ss -H -ltn | grep -q ":${dns_port}"; then

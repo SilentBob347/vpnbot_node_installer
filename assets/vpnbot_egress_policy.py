@@ -16,12 +16,12 @@ owner rule would break unrelated node traffic and protocol camouflage.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import ipaddress
 import json
 import os
 import pwd
 import re
-import socket
 import subprocess
 import sys
 import tempfile
@@ -181,24 +181,74 @@ def geoip_networks(config: dict[str, Any]) -> dict[int, list[str]]:
     return result
 
 
+def _kernel_policy_has_consumers(config: dict[str, Any]) -> bool:
+    if _existing_interfaces(config):
+        return True
+    for raw_user in config.get("process_users", []):
+        user = str(raw_user or "").strip()
+        if not user:
+            continue
+        try:
+            pwd.getpwnam(user)
+        except KeyError:
+            continue
+        return True
+    return False
+
+
+def _resolve_allowed_domain(domain: str, resolvers: list[str]) -> tuple[str, set[str]]:
+    addresses: set[str] = set()
+    for record_type in ("A", "AAAA"):
+        for resolver in resolvers:
+            try:
+                result = subprocess.run(
+                    [
+                        "dig",
+                        "+short",
+                        "+time=2",
+                        "+tries=1",
+                        f"@{resolver}",
+                        domain,
+                        record_type,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    timeout=4,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            for line in result.stdout.splitlines():
+                try:
+                    addresses.add(str(ipaddress.ip_address(line.strip())))
+                except ValueError:
+                    continue
+            if addresses:
+                break
+    return domain, addresses
+
+
 def exception_addresses(config: dict[str, Any]) -> dict[int, list[str]]:
     addresses: dict[int, set[str]] = {4: set(), 6: set()}
     failed_domains: list[str] = []
-    for domain in allowed_domains(config):
-        try:
-            rows = socket.getaddrinfo(domain, None, type=socket.SOCK_STREAM)
-        except socket.gaierror:
-            failed_domains.append(domain)
-            continue
-        for family, _socktype, _proto, _canonname, sockaddr in rows:
-            if family == socket.AF_INET:
-                addresses[4].add(str(ipaddress.ip_address(sockaddr[0])))
-            elif family == socket.AF_INET6:
-                addresses[6].add(str(ipaddress.ip_address(sockaddr[0])))
+    domains = allowed_domains(config)
+    if _kernel_policy_has_consumers(config):
+        resolvers = [str(item) for item in config.get("dns_upstreams", []) if str(item).strip()]
+        if not resolvers:
+            resolvers = ["1.1.1.1", "1.0.0.1"]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results = pool.map(lambda domain: _resolve_allowed_domain(domain, resolvers), domains)
+            for domain, resolved in results:
+                if not resolved:
+                    failed_domains.append(domain)
+                    continue
+                for raw in resolved:
+                    address = ipaddress.ip_address(raw)
+                    addresses[address.version].add(str(address))
     if failed_domains:
         print(
             "warning: allowed-domain resolution failed for "
-            f"{len(failed_domains)} of {len(allowed_domains(config))} domains",
+            f"{len(failed_domains)} of {len(domains)} domains",
             file=sys.stderr,
         )
 

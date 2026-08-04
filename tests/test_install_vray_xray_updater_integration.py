@@ -113,6 +113,15 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertNotIn("cp -a --parents", egress_installer)
         self.assertIn('relative="${path#/}"', egress_installer)
         self.assertIn('cp -a -- "${path}" "${destination}"', egress_installer)
+        self.assertIn("--max-time 90", egress_installer)
+        self.assertIn('f"{field}_fallback_urls"', egress_installer)
+        self.assertIn("retaining the existing validated database", egress_installer)
+        self.assertIn('"/opt/vpnbot/xray-core/share/${field}.dat"', egress_installer)
+        self.assertIn("Seeded Hysteria ${field} database", egress_installer)
+        self.assertIn("systemctl stop vpnbot-egress-dns.service", egress_installer)
+        self.assertIn("for attempt in $(seq 1 80)", egress_installer)
+        self.assertIn("dnsmasq-base dnsutils", egress_installer)
+        self.assertIn("Leaving foreign 3proxy configuration outside VPnBot policy ownership", egress_installer)
 
 
 class SharedEgressPolicyTests(unittest.TestCase):
@@ -130,6 +139,20 @@ class SharedEgressPolicyTests(unittest.TestCase):
         self.assertLess(lines.index("direct(suffix:donatepay.ru)"), lines.index("reject(suffix:ru)"))
         self.assertLess(lines.index("reject(geosite:category-ru)"), lines.index("reject(geoip:ru)"))
         self.assertEqual(lines[-1], "direct(all)")
+
+    def test_hysteria_only_node_skips_kernel_exception_dns_resolution(self):
+        with mock.patch.object(self.helper, "_existing_interfaces", return_value=[]), mock.patch.object(
+            self.helper.pwd,
+            "getpwnam",
+            side_effect=KeyError("vpnbot-socks"),
+        ), mock.patch.object(self.helper, "_resolve_allowed_domain") as resolver, mock.patch.object(
+            self.helper,
+            "run",
+            return_value=mock.Mock(returncode=0, stdout="[]", stderr=""),
+        ):
+            self.helper.exception_addresses(self.config)
+
+        resolver.assert_not_called()
 
     def test_dns_policy_uses_specific_exception_before_blocked_suffix(self):
         with tempfile.TemporaryDirectory() as raw_tmp, mock.patch.object(
