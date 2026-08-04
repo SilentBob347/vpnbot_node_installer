@@ -92,10 +92,22 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertNotIn("Service Portal", self.text)
         self.assertNotIn("vpnbot-edge", self.text)
 
-    def test_installer_bootstrap_forces_rutracker_direct(self):
-        self.assertIn("VPNBOT_XRAY_FORCE_DIRECT_DOMAINS=", self.text)
-        self.assertIn("vpnbot-allow-rutracker-domains", self.text)
-        self.assertIn('"outboundTag": "direct"', self.text)
+    def test_installer_uses_only_canonical_xray_egress_adapter(self):
+        for legacy_name in (
+            "VPNBOT_XRAY_BLOCK_RU_EGRESS",
+            "VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS",
+            "VPNBOT_XRAY_FORCE_DIRECT_DOMAINS",
+            "VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS",
+            "VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS",
+            "VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE",
+            "VPNBOT_XRAY_RU_GEOSITE_URL",
+            "VPNBOT_XRAY_RU_GEOSITE_FILE",
+            "VPNBOT_XRAY_RU_GEOSITE_TAG",
+        ):
+            self.assertNotIn(legacy_name, self.text)
+        self.assertIn("ensure_xray_core_egress_policy()", self.text)
+        self.assertIn('"${XRAY_ROUTE_HEAL_SCRIPT}" --bootstrap --json', self.text)
+        self.assertNotIn("vpnbot-allow-rutracker-domains", self.text)
 
     def test_installer_applies_shared_egress_policy_before_xray_setup(self):
         main_start = self.text.rindex("main() {")
@@ -103,6 +115,10 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn("install_shared_egress_policy", main_body)
         self.assertLess(
             main_body.index("install_shared_egress_policy"),
+            main_body.index("install_standalone_xray_core"),
+        )
+        self.assertLess(
+            main_body.index("write_xray_route_heal_assets"),
             main_body.index("install_standalone_xray_core"),
         )
         self.assertTrue((REPO_ROOT / "scripts" / "install_egress_policy.sh").is_file())
@@ -175,6 +191,50 @@ class SharedEgressPolicyTests(unittest.TestCase):
         self.assertIn("bind-interfaces", lines)
         self.assertFalse(any(line == "listen-address=0.0.0.0,::" for line in lines))
 
+    def test_dns_policy_loads_ai_extension_only_after_explicit_activation(self):
+        with tempfile.TemporaryDirectory() as raw_tmp, mock.patch.object(
+            self.helper,
+            "_existing_interfaces",
+            return_value=["awg0"],
+        ):
+            root = Path(raw_tmp)
+            config_path = root / "dnsmasq.conf"
+            extension = root / "managed-dnsmasq.conf"
+            with mock.patch.object(self.helper, "AI_DNSMASQ_EXTENSION", extension):
+                self.helper.write_dnsmasq_config(self.config, config_path)
+                self.assertNotIn("conf-file=", config_path.read_text(encoding="utf-8"))
+
+                extension.write_text("host-record=gemini.google.com,192.0.2.10\n", encoding="utf-8")
+                self.helper.write_dnsmasq_config(self.config, config_path)
+                self.assertIn(
+                    f"conf-file={extension}",
+                    config_path.read_text(encoding="utf-8"),
+                )
+
+    def test_ai_local_dns_redirect_exempts_resolver_upstreams_before_redirect(self):
+        calls = []
+
+        def fake_run(argv, *, check=True):
+            calls.append(list(argv))
+            return mock.Mock(returncode=1 if "-C" in argv else 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            extension = Path(raw_tmp) / "managed-dnsmasq.conf"
+            extension.write_text("host-record=chatgpt.com,192.0.2.20\n", encoding="utf-8")
+            with mock.patch.object(self.helper, "AI_DNSMASQ_EXTENSION", extension), mock.patch.object(
+                self.helper,
+                "run",
+                side_effect=fake_run,
+            ):
+                self.helper.configure_ai_local_dns_redirect(self.config)
+
+        return_rules = [row for row in calls if row[-1:] == ["RETURN"]]
+        redirect_rules = [row for row in calls if "REDIRECT" in row]
+        self.assertGreaterEqual(len(return_rules), 2)
+        self.assertEqual(len(redirect_rules), 2)
+        self.assertTrue(all("--to-ports" in row for row in redirect_rules))
+        self.assertTrue(any(row[:4] == ["iptables", "-t", "nat", "-I"] and "OUTPUT" in row for row in calls))
+
     def test_3proxy_acl_uses_exact_and_subdomain_patterns(self):
         with tempfile.TemporaryDirectory() as raw_tmp:
             path = Path(raw_tmp) / "3proxy.acl"
@@ -233,6 +293,14 @@ class SharedEgressPolicyTests(unittest.TestCase):
 class XrayRouteHealRulesTests(unittest.TestCase):
     def setUp(self):
         self.route_heal = importlib.import_module("assets.vpnbot_xray_route_heal")
+        self.policy_path = REPO_ROOT / "assets" / "vpnbot_egress_policy.json"
+        patcher = mock.patch.dict(
+            "os.environ",
+            {"VPNBOT_EGRESS_POLICY_CONFIG": str(self.policy_path)},
+            clear=False,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_web_domains_are_forced_direct_and_not_torrent_blocked(self):
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -286,6 +354,12 @@ class XrayRouteHealRulesTests(unittest.TestCase):
                         "blocked_domain_hosts": ["blocked.example"],
                         "allowed_domain_suffixes": ["allowed.test"],
                         "force_direct_domain_suffixes": ["direct.example"],
+                        "xray": {
+                            "external_geosite_url": "https://example.com/geosite.dat",
+                            "external_geosite_file": "custom-geosite.dat",
+                            "external_geosite_tag": "category-test",
+                            "blocked_ip_matchers": ["1.2.3.0/24"],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -303,6 +377,40 @@ class XrayRouteHealRulesTests(unittest.TestCase):
         self.assertIn("domain:direct.example", summary["force_direct_domains"])
         tags = {rule.get("ruleTag") for rule in payload["routing"]["rules"]}
         self.assertIn("vpnbot-block-ru-domains", tags)
+
+    def test_route_heal_fails_closed_without_canonical_policy(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            routing_path = tmp / "10_routing.json"
+            routing_path.write_text('{"routing":{"rules":[]}}\n', encoding="utf-8")
+            with mock.patch.dict(
+                "os.environ",
+                {"VPNBOT_EGRESS_POLICY_CONFIG": str(tmp / "missing-policy.json")},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "cannot load canonical egress policy"):
+                    self.route_heal.heal_routing(routing_path, tmp)
+
+    def test_legacy_ru_environment_cannot_override_canonical_policy(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            routing_path = tmp / "10_routing.json"
+            routing_path.write_text('{"routing":{"rules":[]}}\n', encoding="utf-8")
+            with mock.patch.dict(
+                "os.environ",
+                {
+                    "VPNBOT_XRAY_BLOCK_RU_EGRESS": "0",
+                    "VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS": "domain:legacy.example",
+                    "VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS": "domain:legacy-block.example",
+                },
+                clear=False,
+            ):
+                _payload, summary, _changed = self.route_heal.heal_routing(routing_path, tmp)
+
+        self.assertTrue(summary["enabled"])
+        self.assertIn("domain:donatepay.ru", summary["allow_domains"])
+        self.assertNotIn("domain:legacy.example", summary["allow_domains"])
+        self.assertNotIn("domain:legacy-block.example", summary["domains"])
 
 
 class VlessPresetHelperTlsDomainTests(unittest.TestCase):

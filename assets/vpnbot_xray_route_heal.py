@@ -16,6 +16,7 @@ from typing import Any
 
 TRUTHY = {"1", "true", "yes", "on"}
 FALSY = {"0", "false", "no", "off"}
+DEFAULT_POLICY_CONFIG = Path("/etc/vpnbot/egress-policy.json")
 MANAGED_TAGS = {
     "vpnbot-allow-rutracker-domains",
     "vpnbot-allow-ru-egress-domains",
@@ -44,25 +45,35 @@ def split_list(value: str) -> list[str]:
     return out
 
 
-def load_shared_egress_policy() -> dict[str, Any] | None:
-    path = Path(
-        os.environ.get(
-            "VPNBOT_EGRESS_POLICY_CONFIG",
-            "/etc/vpnbot/egress-policy.json",
-        )
-    )
+def load_shared_egress_policy() -> dict[str, Any]:
+    path = Path(os.environ.get("VPNBOT_EGRESS_POLICY_CONFIG", str(DEFAULT_POLICY_CONFIG)))
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"cannot load canonical egress policy {path}: {exc}") from exc
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        return None
+        raise RuntimeError(f"unsupported canonical egress policy schema in {path}")
+    required_lists = (
+        "blocked_domain_suffixes",
+        "blocked_domain_hosts",
+        "allowed_domain_suffixes",
+        "force_direct_domain_suffixes",
+    )
+    for key in required_lists:
+        if not isinstance(payload.get(key), list):
+            raise RuntimeError(f"canonical egress policy field {key} must be an array")
+    xray = payload.get("xray")
+    if not isinstance(xray, dict):
+        raise RuntimeError("canonical egress policy field xray must be an object")
+    for key in ("external_geosite_url", "external_geosite_file", "external_geosite_tag"):
+        if not isinstance(xray.get(key), str) or not str(xray[key]).strip():
+            raise RuntimeError(f"canonical egress policy field xray.{key} is invalid")
+    if not isinstance(xray.get("blocked_ip_matchers"), list) or not xray["blocked_ip_matchers"]:
+        raise RuntimeError("canonical egress policy field xray.blocked_ip_matchers must be a non-empty array")
     return payload
 
 
-def policy_domains(policy: dict[str, Any] | None, key: str) -> list[str]:
-    if not policy or not isinstance(policy.get(key), list):
-        return []
+def policy_domains(policy: dict[str, Any], key: str) -> list[str]:
     out: list[str] = []
     for raw in policy[key]:
         domain = str(raw or "").strip().lower().rstrip(".")
@@ -107,26 +118,17 @@ def download_file(url: str, target: Path, *, timeout: int = 20) -> bool:
         tmp.unlink(missing_ok=True)
 
 
-def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
-    policy = load_shared_egress_policy()
+def build_default_rules(
+    share_dir: Path,
+    policy: dict[str, Any] | None = None,
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
+    policy = policy or load_shared_egress_policy()
     blocked_suffixes = policy_domains(policy, "blocked_domain_suffixes")
     blocked_hosts = policy_domains(policy, "blocked_domain_hosts")
-    default_domains = (
-        [f"regexp:\\.{suffix}$" for suffix in blocked_suffixes]
-        + [f"domain:{domain}" for domain in blocked_hosts]
-        if blocked_suffixes or blocked_hosts
-        else [
-            "regexp:\\.ru$",
-            "regexp:\\.su$",
-            "regexp:\\.xn--p1ai$",
-            "domain:ya.ru",
-            "domain:yandex.com",
-            "domain:yandex.net",
-            "domain:yastatic.net",
-            "domain:vk.com",
-        ]
-    )
-    default_ips = ["geoip:ru"]
+    default_domains = [f"regexp:\\.{suffix}$" for suffix in blocked_suffixes]
+    default_domains.extend(f"domain:{domain}" for domain in blocked_hosts)
+    xray_policy = policy["xray"]
+    default_ips = split_list(",".join(str(item) for item in xray_policy["blocked_ip_matchers"]))
     default_torrent_domains = [
         "domain:tracker.opentrackr.org",
         "domain:tracker.openbittorrent.com",
@@ -226,14 +228,13 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
         "212.129.33.59/32",
     ]
 
-    external_enabled = env_bool("VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE", default=True)
-    external_file = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_FILE", "")).strip()
-    external_tag = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_TAG", "")).strip()
-    if external_enabled and external_file and external_tag and (share_dir / external_file).is_file():
+    external_file = str(xray_policy["external_geosite_file"]).strip()
+    external_tag = str(xray_policy["external_geosite_tag"]).strip()
+    if (share_dir / external_file).is_file():
         default_domains.insert(0, f"ext:{external_file}:{external_tag}")
 
-    domains = default_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS", ""))
-    ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS", ""))
+    domains = default_domains
+    ips = default_ips
     torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS", ""))
     torrent_ips = default_torrent_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS", ""))
     policy_force_direct = [
@@ -244,24 +245,8 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
         f"domain:{domain}"
         for domain in policy_domains(policy, "allowed_domain_suffixes")
     ]
-    force_direct_domains = split_list(
-        os.environ.get("VPNBOT_XRAY_FORCE_DIRECT_DOMAINS", "")
-    ) or policy_force_direct or split_list(
-        "domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc,"
-        "domain:bingwallpaper.anerg.com,domain:koreanrandom.com"
-    )
-    allow_domains = split_list(
-        os.environ.get("VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS", "")
-    ) or policy_allow or split_list(
-        "domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,"
-        "domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,"
-        "domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,"
-        "domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,"
-        "domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,"
-        "domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,"
-        "domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,"
-        "domain:gta5majestic.com"
-    )
+    force_direct_domains = policy_force_direct
+    allow_domains = policy_allow
     return domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips
 
 
@@ -281,13 +266,18 @@ def load_routing(path: Path) -> dict[str, Any]:
     return payload
 
 
-def heal_routing(path: Path, share_dir: Path) -> tuple[dict[str, Any], dict[str, Any], bool]:
+def heal_routing(
+    path: Path,
+    share_dir: Path,
+    policy: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
     payload = load_routing(path)
     before = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     routing = payload["routing"]
     rules = routing["rules"]
-    domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips = build_default_rules(share_dir)
-    enabled = env_bool("VPNBOT_XRAY_BLOCK_RU_EGRESS", default=True)
+    policy = policy or load_shared_egress_policy()
+    domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips = build_default_rules(share_dir, policy)
+    enabled = True
     torrent_enabled = env_bool("VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY", default=True)
 
     if enabled or torrent_enabled:
@@ -483,6 +473,11 @@ def service_active(service_name: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Repair VPnBot Xray routing and shared route state")
     parser.add_argument("--check", action="store_true", help="validate and report only; do not write files or restart services")
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="write the initial routing policy before Xray and its systemd service are installed",
+    )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON report")
     parser.add_argument("--no-sync", action="store_true", help="do not run the nginx route sync helper")
     parser.add_argument("--no-restart", action="store_true", help="write files but do not restart Xray")
@@ -494,9 +489,6 @@ def main() -> int:
     xray_bin = Path(os.environ.get("XRAY_CORE_BIN", "/opt/vpnbot/xray-core/bin/xray"))
     service_name = os.environ.get("XRAY_CORE_SERVICE_NAME", "vpnbot-xray.service")
     sync_script = Path(os.environ.get("XRAY_SYNC_SCRIPT", "/usr/local/bin/vpnbot-xray-sync-routes"))
-    geosite_url = os.environ.get("VPNBOT_XRAY_RU_GEOSITE_URL", "")
-    geosite_file = os.environ.get("VPNBOT_XRAY_RU_GEOSITE_FILE", "roscomvpn-geosite.dat")
-
     report: dict[str, Any] = {
         "routing_file": str(routing_path),
         "share_dir": str(share_dir),
@@ -506,9 +498,13 @@ def main() -> int:
     backup_path = ""
 
     try:
+        policy = load_shared_egress_policy()
+        xray_policy = policy["xray"]
+        geosite_url = str(xray_policy["external_geosite_url"])
+        geosite_file = str(xray_policy["external_geosite_file"])
         geosite_target = share_dir / geosite_file
         geosite_changed = False
-        if env_bool("VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE", default=True) and geosite_url and not args.check:
+        if geosite_url and not args.check:
             try:
                 geosite_changed = download_file(geosite_url, geosite_target)
             except Exception as exc:
@@ -516,7 +512,7 @@ def main() -> int:
         report["geosite_exists"] = geosite_target.is_file()
         report["geosite_changed"] = geosite_changed
 
-        payload, routing_summary, routing_changed = heal_routing(routing_path, share_dir)
+        payload, routing_summary, routing_changed = heal_routing(routing_path, share_dir, policy)
         report.update(routing_summary)
         report["routing_changed"] = routing_changed
 
@@ -529,7 +525,7 @@ def main() -> int:
         report["backup"] = backup_path
 
         needs_restart = bool(geosite_changed or routing_changed)
-        if needs_restart and not args.check:
+        if needs_restart and not args.check and not args.bootstrap:
             xray_env = os.environ.copy()
             xray_env["XRAY_LOCATION_ASSET"] = str(share_dir)
             code, out = run([str(xray_bin), "run", "-confdir", str(confdir), "-test"], timeout=60, env=xray_env)
@@ -547,15 +543,15 @@ def main() -> int:
                 if code != 0:
                     raise RuntimeError("xray service restart failed")
 
-        if not args.no_sync and not args.check and sync_script.exists():
+        if not args.no_sync and not args.check and not args.bootstrap and sync_script.exists():
             code, out = run([str(sync_script)], timeout=90)
             report["sync_code"] = code
             report["sync_tail"] = out[-1000:]
             if code != 0:
                 raise RuntimeError("route sync failed")
 
-        report["xray_active"] = service_active(service_name)
-        ok = report["xray_active"] == "active"
+        report["xray_active"] = "not-installed" if args.bootstrap else service_active(service_name)
+        ok = args.bootstrap or report["xray_active"] == "active"
         report["ok"] = ok
     except Exception as exc:
         report["ok"] = False

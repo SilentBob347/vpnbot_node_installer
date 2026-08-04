@@ -18,6 +18,14 @@
       "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
     ]
   },
+  "xray": {
+    "external_geosite_url": "https://github.com/hydraponique/roscomvpn-geosite/releases/latest/download/geosite.dat",
+    "external_geosite_file": "roscomvpn-geosite.dat",
+    "external_geosite_tag": "category-ru",
+    "blocked_ip_matchers": [
+      "geoip:ru"
+    ]
+  },
   "blocked_domain_suffixes": [
     "ru",
     "su",

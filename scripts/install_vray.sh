@@ -224,18 +224,9 @@ XRAY_POLICY_HANDSHAKE_SECONDS="${XRAY_POLICY_HANDSHAKE_SECONDS:-4}"
 XRAY_POLICY_CONN_IDLE_SECONDS="${XRAY_POLICY_CONN_IDLE_SECONDS:-180}"
 XRAY_POLICY_UPLINK_ONLY_SECONDS="${XRAY_POLICY_UPLINK_ONLY_SECONDS:-8}"
 XRAY_POLICY_DOWNLINK_ONLY_SECONDS="${XRAY_POLICY_DOWNLINK_ONLY_SECONDS:-20}"
-VPNBOT_XRAY_BLOCK_RU_EGRESS="${VPNBOT_XRAY_BLOCK_RU_EGRESS:-1}"
-VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS:-domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com}"
-VPNBOT_XRAY_FORCE_DIRECT_DOMAINS="${VPNBOT_XRAY_FORCE_DIRECT_DOMAINS:-domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc,domain:bingwallpaper.anerg.com,domain:koreanrandom.com}"
 VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY:-1}"
 VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS:-}"
 VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS:-}"
-VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS="${VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS:-}"
-VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS="${VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS:-}"
-VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE="${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE:-1}"
-VPNBOT_XRAY_RU_GEOSITE_URL="${VPNBOT_XRAY_RU_GEOSITE_URL:-https://github.com/hydraponique/roscomvpn-geosite/releases/latest/download/geosite.dat}"
-VPNBOT_XRAY_RU_GEOSITE_FILE="${VPNBOT_XRAY_RU_GEOSITE_FILE:-roscomvpn-geosite.dat}"
-VPNBOT_XRAY_RU_GEOSITE_TAG="${VPNBOT_XRAY_RU_GEOSITE_TAG:-category-ru}"
 VPNBOT_NF_CONNTRACK_TCP_ESTABLISHED_TIMEOUT="${VPNBOT_NF_CONNTRACK_TCP_ESTABLISHED_TIMEOUT:-7200}"
 VPNBOT_XRAY_RESERVED_EXTRA_PORTS="${VPNBOT_XRAY_RESERVED_EXTRA_PORTS:-10086}"
 VPNBOT_NF_CONNTRACK_MAX="${VPNBOT_NF_CONNTRACK_MAX:-1048576}"
@@ -1557,429 +1548,20 @@ PY
 }
 
 
-download_xray_core_ru_geosite() {
-    if ! env_is_true "${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE}"; then
-        info "External RU geosite download is disabled by VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE=${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE}"
-        return 0
+ensure_xray_core_egress_policy() {
+    if [[ ! -x "${XRAY_ROUTE_HEAL_SCRIPT}" ]]; then
+        err "Canonical Xray egress adapter is missing: ${XRAY_ROUTE_HEAL_SCRIPT}"
+        exit 1
     fi
 
-    local target tmp
-    target="${XRAY_CORE_SHARE_DIR}/${VPNBOT_XRAY_RU_GEOSITE_FILE}"
-    tmp="$(mktemp)"
-    if curl -fsSL --retry 3 --connect-timeout 10 -o "${tmp}" "${VPNBOT_XRAY_RU_GEOSITE_URL}"; then
-        if [[ -s "${tmp}" ]]; then
-            install -m 644 "${tmp}" "${target}"
-            rm -f "${tmp}"
-            log "Installed external RU geosite for Xray routing: ${target}"
-            return 0
-        fi
-        warn "Downloaded external RU geosite is empty: ${VPNBOT_XRAY_RU_GEOSITE_URL}"
-    else
-        warn "Failed to download external RU geosite: ${VPNBOT_XRAY_RU_GEOSITE_URL}"
-    fi
-
-    rm -f "${tmp}"
-    warn "Continuing with built-in/manual RU routing fallback only"
+    "${XRAY_ROUTE_HEAL_SCRIPT}" --bootstrap --json
+    log "Applied canonical VPnBot egress policy to Xray routing"
 }
-
-
-ensure_xray_core_ru_egress_block() {
-    XRAY_CORE_ROUTING_FILE="${XRAY_CORE_CONFIG_DIR}/10_routing.json" \
-    XRAY_CORE_SHARE_DIR_VALUE="${XRAY_CORE_SHARE_DIR}" \
-    VPNBOT_XRAY_BLOCK_RU_EGRESS_VALUE="${VPNBOT_XRAY_BLOCK_RU_EGRESS}" \
-    VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}" \
-    VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS}" \
-    VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS_VALUE="${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS}" \
-    VPNBOT_XRAY_FORCE_DIRECT_DOMAINS_VALUE="${VPNBOT_XRAY_FORCE_DIRECT_DOMAINS}" \
-    VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS_VALUE="${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS}" \
-    VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE_VALUE="${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE}" \
-    VPNBOT_XRAY_RU_GEOSITE_FILE_VALUE="${VPNBOT_XRAY_RU_GEOSITE_FILE}" \
-    VPNBOT_XRAY_RU_GEOSITE_TAG_VALUE="${VPNBOT_XRAY_RU_GEOSITE_TAG}" \
-    VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS_VALUE="${VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS}" \
-    VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS_VALUE="${VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS}" \
-    python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-
-TRUTHY = {"1", "true", "yes", "on"}
-FALSY = {"0", "false", "no", "off"}
-
-
-def env_enabled(name: str, default: bool = True) -> bool:
-    raw = str(os.environ.get(name, "")).strip().lower()
-    if raw in TRUTHY:
-        return True
-    if raw in FALSY:
-        return False
-    return default
-
-
-def split_list(value: str) -> list[str]:
-    out: list[str] = []
-    for item in str(value or "").replace("\n", ",").split(","):
-        item = item.strip()
-        if item and item not in out:
-            out.append(item)
-    return out
-
-
-def rule_covers(rule: dict, key: str, values: list[str]) -> bool:
-    if rule.get("type") != "field" or rule.get("outboundTag") != "block":
-        return False
-    present = set(rule.get(key) or [])
-    return bool(values) and set(values).issubset(present)
-
-
-def exact_legacy_rule(rule: dict, key: str, values: list[str]) -> bool:
-    if rule.get("type") != "field" or rule.get("outboundTag") != "block":
-        return False
-    if rule.get("ruleTag"):
-        return False
-    return set(rule.get(key) or []) == set(values)
-
-
-routing_path = Path(os.environ["XRAY_CORE_ROUTING_FILE"])
-share_dir = Path(os.environ["XRAY_CORE_SHARE_DIR_VALUE"])
-enabled = env_enabled("VPNBOT_XRAY_BLOCK_RU_EGRESS_VALUE", default=True)
-external_geosite_enabled = env_enabled("VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE_VALUE", default=True)
-
-default_domains = [
-    "regexp:\\.ru$",
-    "regexp:\\.su$",
-    "regexp:\\.xn--p1ai$",
-    "domain:ya.ru",
-    "domain:yandex.com",
-    "domain:yandex.net",
-    "domain:yastatic.net",
-    "domain:vk.com",
-]
-default_ips = ["geoip:ru"]
-default_torrent_domains = [
-    "domain:tracker.opentrackr.org",
-    "domain:tracker.openbittorrent.com",
-    "domain:tracker.publicbt.com",
-    "domain:tracker.internetwarriors.net",
-    "domain:tracker.yoshi210.com",
-    "domain:tracker.skyts.net",
-    "domain:tracker.tiny-vps.com",
-    "domain:tracker.coppersurfer.tk",
-    "domain:tracker.leechers-paradise.org",
-    "domain:tracker.torrent.eu.org",
-    "domain:tracker.btzoo.eu",
-    "domain:open.demonii.com",
-    "domain:open.acgtracker.com",
-    "domain:opensharing.org",
-    "domain:announce.torrentsmd.com",
-    "domain:bt.careland.com.cn",
-    "domain:i.bandito.org",
-    "domain:bttrack.9you.com",
-    "domain:p4p.arenabg.com",
-    "domain:explodie.org",
-    "domain:9.rarbg.com",
-    "domain:9.rarbg.me",
-    "domain:9.rarbg.to",
-    "domain:11.rarbg.com",
-    "domain:ehtracker.org",
-    "domain:tracker.grepler.com",
-    "domain:tracker.seedoff.net",
-    "domain:tracker.23794.top",
-    "domain:tracker.yemekyedim.com",
-    "domain:tracker.bt4g.com",
-    "domain:trackers.run",
-    "domain:tracker.itscraftsoftware.my.id",
-    "domain:tracker1.520.jp",
-    "domain:tracker2.dler.org",
-    "domain:tracker1.itzmx.com",
-    "domain:tracker.zhuqiy.top",
-    "domain:tracker.waaa.moe",
-    "domain:tracker.renfei.net",
-    "domain:tracker.pmman.tech",
-    "domain:tracker.leechshield.link",
-    "domain:tracker.dler.org",
-    "domain:tracker.dler.com",
-    "domain:bittorrent-tracker.e-n-c-r-y-p-t.net",
-    "domain:tracker.gcrenwp.top",
-    "domain:tracker1.bt.moack.co.kr",
-    "domain:tracker.zerobytes.xyz",
-    "domain:tracker.ipv6tracker.org",
-    "domain:tracker.foreverpirates.co",
-    "domain:tracker.torrentfrancais.com",
-    "domain:torrenttracker.nwc.acsalaska.net",
-    "domain:nyaa.tracker.wf",
-    "domain:itorrents-igruha.org",
-    "domain:bittorrent.com",
-    "domain:utorrent.com",
-    "domain:router.bittorrent.com",
-    "domain:router.utorrent.com",
-    "domain:dht.transmissionbt.com",
-]
-default_torrent_ips = [
-    "93.158.213.92/32",
-    "152.231.114.227/32",
-    "113.17.67.93/32",
-    "91.216.110.53/32",
-    "185.121.168.96/32",
-    "212.60.5.95/32",
-    "212.60.5.96/32",
-    "212.60.5.99/32",
-    "180.153.120.112/32",
-    "23.157.120.14/32",
-    "157.90.33.73/32",
-    "157.90.33.74/32",
-    "5.79.104.115/32",
-    "95.211.79.57/32",
-    "89.149.222.91/32",
-    "212.7.202.58/32",
-    "37.48.92.183/32",
-    "212.7.200.122/32",
-    "37.48.81.218/32",
-    "46.4.109.148/32",
-    "123.245.62.39/32",
-    "123.245.62.80/32",
-    "211.75.210.221/32",
-    "211.75.205.187/32",
-    "211.75.205.188/32",
-    "211.75.205.189/32",
-    "60.249.37.20/32",
-    "216.144.239.90/32",
-    "107.189.2.131/32",
-    "156.234.201.18/32",
-    "107.152.127.9/32",
-    "195.16.73.95/32",
-    "186.2.165.106/32",
-    "67.215.246.10/32",
-    "82.221.103.244/32",
-    "87.98.162.88/32",
-    "212.129.33.59/32",
-]
-
-external_file = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_FILE_VALUE", "")).strip()
-external_tag = str(os.environ.get("VPNBOT_XRAY_RU_GEOSITE_TAG_VALUE", "")).strip()
-if external_geosite_enabled and external_file and external_tag and (share_dir / external_file).is_file():
-    default_domains.insert(0, f"ext:{external_file}:{external_tag}")
-
-domains = default_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS_VALUE", ""))
-ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS_VALUE", ""))
-allow_domains = split_list(os.environ.get("VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS_VALUE", ""))
-force_direct_domains = split_list(os.environ.get("VPNBOT_XRAY_FORCE_DIRECT_DOMAINS_VALUE", ""))
-torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS_VALUE", ""))
-torrent_ips = default_torrent_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS_VALUE", ""))
-
-if routing_path.exists():
-    try:
-        payload = json.loads(routing_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise SystemExit(f"Failed to parse {routing_path}: {exc}") from exc
-else:
-    payload = {}
-
-if not isinstance(payload, dict):
-    raise SystemExit(f"Invalid Xray routing JSON in {routing_path}: top-level value must be an object")
-
-routing = payload.setdefault("routing", {})
-if not isinstance(routing, dict):
-    raise SystemExit(f"Invalid Xray routing JSON in {routing_path}: routing must be an object")
-
-rules = routing.setdefault("rules", [])
-if not isinstance(rules, list):
-    raise SystemExit(f"Invalid Xray routing JSON in {routing_path}: routing.rules must be an array")
-
-torrent_enabled = env_enabled("VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY_VALUE", default=True)
-managed_tags = {
-    "vpnbot-allow-rutracker-domains",
-    "vpnbot-allow-ru-egress-domains",
-    "vpnbot-block-torrent-peer-discovery-domains",
-    "vpnbot-block-torrent-peer-discovery-ips",
-    "vpnbot-block-ru-domains",
-    "vpnbot-block-ru-ips",
-}
-
-if enabled or torrent_enabled:
-    strategy = str(routing.get("domainStrategy") or "").strip()
-    if strategy not in {"IPIfNonMatch", "IPOnDemand"}:
-        routing["domainStrategy"] = "IPIfNonMatch"
-
-    managed = []
-    if enabled and allow_domains:
-        managed.append(
-            (
-                "vpnbot-allow-ru-egress-domains",
-                "domain",
-                allow_domains,
-                {
-                    "type": "field",
-                    "domain": allow_domains,
-                    "outboundTag": "direct",
-                    "ruleTag": "vpnbot-allow-ru-egress-domains",
-                },
-            )
-        )
-    if force_direct_domains:
-        managed.append(
-            (
-                "vpnbot-allow-rutracker-domains",
-                "domain",
-                force_direct_domains,
-                {
-                    "type": "field",
-                    "domain": force_direct_domains,
-                    "outboundTag": "direct",
-                    "ruleTag": "vpnbot-allow-rutracker-domains",
-                },
-            )
-        )
-    if torrent_enabled and torrent_domains:
-        managed.append(
-            (
-                "vpnbot-block-torrent-peer-discovery-domains",
-                "domain",
-                torrent_domains,
-                {
-                    "type": "field",
-                    "domain": torrent_domains,
-                    "outboundTag": "block",
-                    "ruleTag": "vpnbot-block-torrent-peer-discovery-domains",
-                },
-            )
-        )
-    if torrent_enabled and torrent_ips:
-        managed.append(
-            (
-                "vpnbot-block-torrent-peer-discovery-ips",
-                "ip",
-                torrent_ips,
-                {
-                    "type": "field",
-                    "ip": torrent_ips,
-                    "outboundTag": "block",
-                    "ruleTag": "vpnbot-block-torrent-peer-discovery-ips",
-                },
-            )
-        )
-    if enabled:
-        managed.extend([
-            (
-                "vpnbot-block-ru-domains",
-                "domain",
-                domains,
-                {
-                    "type": "field",
-                    "domain": domains,
-                    "outboundTag": "block",
-                    "ruleTag": "vpnbot-block-ru-domains",
-                },
-            ),
-            (
-                "vpnbot-block-ru-ips",
-                "ip",
-                ips,
-                {
-                    "type": "field",
-                    "ip": ips,
-                    "outboundTag": "block",
-                    "ruleTag": "vpnbot-block-ru-ips",
-                },
-            ),
-        ])
-    else:
-        rules[:] = [
-            rule
-            for rule in rules
-            if not (
-                isinstance(rule, dict)
-                and (
-                    rule.get("ruleTag") in {"vpnbot-allow-ru-egress-domains", "vpnbot-block-ru-domains", "vpnbot-block-ru-ips"}
-                    or exact_legacy_rule(rule, "domain", domains)
-                    or exact_legacy_rule(rule, "ip", ips)
-                )
-            )
-        ]
-    if not torrent_enabled:
-        rules[:] = [
-            rule
-            for rule in rules
-            if not (
-                isinstance(rule, dict)
-                and (
-                    rule.get("ruleTag") in {
-                        "vpnbot-block-torrent-peer-discovery-domains",
-                        "vpnbot-block-torrent-peer-discovery-ips",
-                    }
-                    or exact_legacy_rule(rule, "domain", torrent_domains)
-                    or exact_legacy_rule(rule, "ip", torrent_ips)
-                )
-            )
-        ]
-    if not force_direct_domains:
-        rules[:] = [
-            rule
-            for rule in rules
-            if not (isinstance(rule, dict) and rule.get("ruleTag") == "vpnbot-allow-rutracker-domains")
-        ]
-    for tag, key, values, rule in reversed(managed):
-        tagged_index = next(
-            (idx for idx, existing in enumerate(rules) if isinstance(existing, dict) and existing.get("ruleTag") == tag),
-            None,
-        )
-        if tagged_index is not None:
-            rules[tagged_index] = rule
-            continue
-
-        legacy_index = next(
-            (
-                idx
-                for idx, existing in enumerate(rules)
-                if isinstance(existing, dict) and exact_legacy_rule(existing, key, values)
-            ),
-            None,
-        )
-        if legacy_index is not None:
-            rules[legacy_index] = rule
-            continue
-
-        if not any(rule_covers(existing, key, values) for existing in rules if isinstance(existing, dict)):
-            rules.insert(0, rule)
-else:
-    rules[:] = [
-        rule
-        for rule in rules
-        if not (
-            isinstance(rule, dict)
-            and (
-                rule.get("ruleTag") in managed_tags
-                or exact_legacy_rule(rule, "domain", domains)
-                or exact_legacy_rule(rule, "domain", torrent_domains)
-                or exact_legacy_rule(rule, "ip", ips)
-                or exact_legacy_rule(rule, "ip", torrent_ips)
-            )
-        )
-    ]
-
-routing_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-PY
-
-    if env_is_true "${VPNBOT_XRAY_BLOCK_RU_EGRESS}"; then
-        log "Enabled Xray routing block for Russian destination domains/IPs in ${XRAY_CORE_CONFIG_DIR}/10_routing.json"
-    else
-        info "Xray Russian destination egress block is disabled by VPNBOT_XRAY_BLOCK_RU_EGRESS=${VPNBOT_XRAY_BLOCK_RU_EGRESS}"
-    fi
-    if env_is_true "${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}"; then
-        log "Enabled Xray routing block for torrent peer-discovery domains/IPs in ${XRAY_CORE_CONFIG_DIR}/10_routing.json"
-    else
-        info "Xray torrent peer-discovery block is disabled by VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY=${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}"
-    fi
-}
-
-
 write_xray_core_base_configs() {
     mkdir -p "${XRAY_CORE_ROOT}/bin" "${XRAY_CORE_CONFIG_DIR}" "${XRAY_CORE_SHARE_DIR}" "${XRAY_CORE_LOG_DIR}"
     touch "${XRAY_CORE_LOG_DIR}/access.log" "${XRAY_CORE_LOG_DIR}/error.log"
     chmod 755 "${XRAY_CORE_ROOT}" "${XRAY_CORE_ROOT}/bin" "${XRAY_CORE_CONFIG_DIR}" "${XRAY_CORE_SHARE_DIR}" "${XRAY_CORE_LOG_DIR}"
     chmod 600 "${XRAY_CORE_LOG_DIR}/access.log" "${XRAY_CORE_LOG_DIR}/error.log" 2>/dev/null || true
-
-    download_xray_core_ru_geosite
 
     # Keep minimal access/error logs enabled. The online and abuse trackers depend
     # on access.log, so rerunning the installer repairs older disabled log files.
@@ -2005,7 +1587,7 @@ EOF
 EOF
     fi
 
-    ensure_xray_core_ru_egress_block
+    ensure_xray_core_egress_policy
 
     if [[ ! -f "${XRAY_CORE_CONFIG_DIR}/20_outbounds.json" ]]; then
         cat > "${XRAY_CORE_CONFIG_DIR}/20_outbounds.json" <<'EOF'
@@ -3575,18 +3157,10 @@ export XRAY_CORE_BIN=${XRAY_CORE_BIN@Q}
 export XRAY_CORE_SHARE_DIR=${XRAY_CORE_SHARE_DIR@Q}
 export XRAY_CORE_SERVICE_NAME=${XRAY_CORE_SERVICE_NAME@Q}
 export XRAY_SYNC_SCRIPT=${XRAY_SYNC_SCRIPT@Q}
-export VPNBOT_XRAY_BLOCK_RU_EGRESS=${VPNBOT_XRAY_BLOCK_RU_EGRESS@Q}
-export VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS=${VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS@Q}
-export VPNBOT_XRAY_FORCE_DIRECT_DOMAINS=${VPNBOT_XRAY_FORCE_DIRECT_DOMAINS@Q}
+export VPNBOT_EGRESS_POLICY_CONFIG=/etc/vpnbot/egress-policy.json
 export VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY=${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS=${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS@Q}
 export VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS=${VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS@Q}
-export VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS=${VPNBOT_XRAY_BLOCK_RU_EXTRA_DOMAINS@Q}
-export VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS=${VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS@Q}
-export VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE=${VPNBOT_XRAY_BLOCK_RU_EXTERNAL_GEOSITE@Q}
-export VPNBOT_XRAY_RU_GEOSITE_URL=${VPNBOT_XRAY_RU_GEOSITE_URL@Q}
-export VPNBOT_XRAY_RU_GEOSITE_FILE=${VPNBOT_XRAY_RU_GEOSITE_FILE@Q}
-export VPNBOT_XRAY_RU_GEOSITE_TAG=${VPNBOT_XRAY_RU_GEOSITE_TAG@Q}
 exec /usr/bin/env python3 ${helper_asset@Q} "\$@"
 EOF
     chmod 755 "${XRAY_ROUTE_HEAL_SCRIPT}"
@@ -3711,9 +3285,8 @@ show_xray_core_summary() {
     echo "  Abuse audit API: ${XRAY_ABUSE_AUDIT_URL}"
     echo "  Multi-IP abuse API: ${XRAY_ABUSE_MULTI_IP_URL}"
     echo "  Multi-IP history: ${XRAY_ABUSE_MULTI_IP_HISTORY_FILE}"
-    echo "  RU destination egress block: ${VPNBOT_XRAY_BLOCK_RU_EGRESS}"
+    echo "  Egress policy: /etc/vpnbot/egress-policy.json (canonical)"
     echo "  Torrent peer-discovery domain block: ${VPNBOT_XRAY_BLOCK_TORRENT_DISCOVERY}"
-    echo "  RU geosite: ${XRAY_CORE_SHARE_DIR}/${VPNBOT_XRAY_RU_GEOSITE_FILE} tag=${VPNBOT_XRAY_RU_GEOSITE_TAG}"
     echo "  Root: ${XRAY_CORE_ROOT}"
     echo "  Binary: ${XRAY_CORE_BIN}"
     echo "  Config dir: ${XRAY_CORE_CONFIG_DIR}"
@@ -4063,6 +3636,7 @@ main() {
     sync_domain_aliases
     install_dependencies
     install_shared_egress_policy
+    write_xray_route_heal_assets
     configure_ssh_control_plane_guard
     configure_vpnbot_network_limits
     configure_dynv6_domain
@@ -4082,7 +3656,6 @@ main() {
     write_xray_core_installer_state
     write_xray_core_rollout_bundle
     write_xray_sync_assets
-    write_xray_route_heal_assets
     write_vless_preset_helper
     write_direct_helpers
     enable_sync

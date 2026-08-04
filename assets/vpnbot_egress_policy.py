@@ -34,8 +34,10 @@ from typing import Any, Iterable
 DEFAULT_CONFIG = Path("/etc/vpnbot/egress-policy.json")
 STATE_DIR = Path("/var/lib/vpnbot-egress-policy")
 DNSMASQ_CONFIG = Path("/etc/vpnbot/egress-dnsmasq.conf")
+AI_DNSMASQ_EXTENSION = Path("/etc/vpnbot-ai-access/managed-dnsmasq.conf")
 CHAIN = "VPNBOT_RU_EGRESS"
 DNS_CHAIN = "VPNBOT_RU_DNS"
+AI_LOCAL_DNS_CHAIN = "VPNBOT_AI_DNS_OUT"
 HYSTERIA_BEGIN = "# BEGIN VPnBot managed egress policy"
 HYSTERIA_END = "# END VPnBot managed egress policy"
 THREEPROXY_BEGIN = "# BEGIN VPnBot managed egress policy"
@@ -70,6 +72,16 @@ def load_config(path: Path) -> dict[str, Any]:
         for key in ("geoip_url", "geosite_url")
     ):
         raise ValueError(f"{path}: hysteria GeoIP/GeoSite sources are invalid")
+    xray = raw.get("xray")
+    if not isinstance(xray, dict):
+        raise ValueError(f"{path}: xray must be an object")
+    for key in ("external_geosite_url", "external_geosite_file", "external_geosite_tag"):
+        if not isinstance(xray.get(key), str) or not xray[key].strip():
+            raise ValueError(f"{path}: xray.{key} is invalid")
+    if not xray["external_geosite_url"].startswith("https://"):
+        raise ValueError(f"{path}: xray.external_geosite_url must use HTTPS")
+    if not isinstance(xray.get("blocked_ip_matchers"), list) or not xray["blocked_ip_matchers"]:
+        raise ValueError(f"{path}: xray.blocked_ip_matchers must be a non-empty array")
     for key in (
         "blocked_domain_suffixes",
         "blocked_domain_hosts",
@@ -316,6 +328,14 @@ def _ensure_hook(tool: str, parent: str, chain: str, *, table: str = "filter") -
     run(base + ["-I", parent, "1", "-j", chain])
 
 
+def _remove_hook(tool: str, parent: str, chain: str, *, table: str = "filter") -> None:
+    base = [tool]
+    if table != "filter":
+        base += ["-t", table]
+    while run(base + ["-C", parent, "-j", chain], check=False).returncode == 0:
+        run(base + ["-D", parent, "-j", chain], check=False)
+
+
 def _existing_interfaces(config: dict[str, Any]) -> list[str]:
     names = {path.name for path in Path("/sys/class/net").glob("*")}
     return [name for name in config["forward_interfaces"] if name in names]
@@ -349,6 +369,44 @@ def disable_dns_redirect() -> None:
         base = [tool, "-t", "nat"]
         while run(base + ["-C", "PREROUTING", "-j", DNS_CHAIN], check=False).returncode == 0:
             run(base + ["-D", "PREROUTING", "-j", DNS_CHAIN], check=False)
+    _remove_hook("iptables", "OUTPUT", AI_LOCAL_DNS_CHAIN, table="nat")
+
+
+def configure_ai_local_dns_redirect(config: dict[str, Any]) -> None:
+    """Route node-local plaintext DNS through the shared filtered resolver.
+
+    Xray and Hysteria resolve SOCKS/proxy destinations from the node rather
+    than from a WireGuard interface, so the PREROUTING tunnel hook cannot see
+    those queries.  The optional AI access extension activates one narrowly
+    scoped OUTPUT DNS chain.  Canonical dnsmasq upstreams are exempted first to
+    prevent a resolver loop; when the extension is absent the hook is removed
+    and node-local DNS remains byte-for-byte at its previous behavior.
+    """
+
+    _ensure_chain("iptables", AI_LOCAL_DNS_CHAIN, table="nat")
+    if not AI_DNSMASQ_EXTENSION.is_file():
+        _remove_hook("iptables", "OUTPUT", AI_LOCAL_DNS_CHAIN, table="nat")
+        return
+
+    for raw in config["dns_upstreams"]:
+        try:
+            upstream = ipaddress.ip_address(str(raw))
+        except ValueError:
+            continue
+        if upstream.version != 4:
+            continue
+        for proto in ("udp", "tcp"):
+            run([
+                "iptables", "-t", "nat", "-A", AI_LOCAL_DNS_CHAIN,
+                "-d", str(upstream), "-p", proto, "--dport", "53", "-j", "RETURN",
+            ])
+    for proto in ("udp", "tcp"):
+        run([
+            "iptables", "-t", "nat", "-A", AI_LOCAL_DNS_CHAIN,
+            "-p", proto, "--dport", "53", "-j", "REDIRECT",
+            "--to-ports", str(config["dns_redirect_port"]),
+        ])
+    _ensure_hook("iptables", "OUTPUT", AI_LOCAL_DNS_CHAIN, table="nat")
 
 
 def dns_listener_ready(config: dict[str, Any]) -> bool:
@@ -404,6 +462,8 @@ def apply_firewall(config: dict[str, Any], networks: dict[int, list[str]], allow
                 ])
         _ensure_hook(tool, "PREROUTING", DNS_CHAIN, table="nat")
 
+    configure_ai_local_dns_redirect(config)
+
 
 def write_dnsmasq_config(config: dict[str, Any], path: Path = DNSMASQ_CONFIG) -> None:
     interfaces = _existing_interfaces(config)
@@ -423,6 +483,8 @@ def write_dnsmasq_config(config: dict[str, Any], path: Path = DNSMASQ_CONFIG) ->
     ]
     for upstream in config["dns_upstreams"]:
         lines.append(f"server={upstream}")
+    if AI_DNSMASQ_EXTENSION.is_file():
+        lines.append(f"conf-file={AI_DNSMASQ_EXTENSION}")
     for domain in allowed_domains(config):
         for upstream in config["dns_upstreams"]:
             lines.append(f"server=/{domain}/{upstream}")

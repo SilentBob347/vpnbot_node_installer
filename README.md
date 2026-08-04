@@ -73,34 +73,13 @@ workaround for installer-managed self-signed TLS fallback certificates; modern
 Xray-core rejects it after 2026-06-01, so certificate issuance/retry must be
 fixed instead.
 
-Standalone Xray-core installs block proxied user egress to Russian destination
-domains/IPs by default through Xray `routing` and the `blackhole` outbound. The
-installer downloads `roscomvpn-geosite.dat` from
-`hydraponique/roscomvpn-geosite` and uses `ext:roscomvpn-geosite.dat:category-ru`
-plus conservative fallback rules for `.ru`, `.su`, `.рф`, Yandex/VK domains and
-`geoip:ru`. Payment gateways `domain:pally.info`, `domain:pal24.pro`, and
-`domain:donatepay.ru` are allowed before the RU block. DonationAlerts widgets
-are also allowed through `domain:donationalerts.com` and explicit
-`domain:www.donationalerts.com`, which cover the main widget page,
-`files.donationalerts.com`, and the realtime widget connection under the same
-base domain. Kodik player domains are allowed through `domain:kodikplayer.com`,
-`domain:kodikres.com`, and `domain:kodik-cdn.com`. Habr is allowed through
-`domain:habr.com`, `domain:habrastorage.org`, and `domain:hsto.org`, covering
-Habr pages, subdomains, static assets, and image storage. RuTracker is allowed
-through `domain:rutracker.org` and `domain:rutracker.cc`, covering the forum and
-its static assets. Common LordFilm mirrors are allowed through `domain:lordfilm.ru`,
-`domain:lordfilm.com`, `domain:lordfilm.tv`, `domain:lordfilm.lu`,
-`domain:lordfilm.gg`, `domain:lordfilm.black`, `domain:lordfilm.film`,
-`domain:lordfilm1.ru`, `domain:lordfilm2.ru`, and `domain:lordfilm2025.ru`.
-The same narrow exception is used for Majestic RP game
-infrastructure: `domain:majestic-rp.ru`, `domain:majestic-launcher.ru`,
-`domain:majestic-files.net`, `domain:majestic-files.com`, and
-`domain:gta5majestic.com`. This does not add a server firewall rule, so REALITY
-`dest` camouflage targets such as Yandex remain reachable by the node itself.
-Set `VPNBOT_XRAY_BLOCK_RU_EGRESS=0` before running the installer to disable that
-routing block for a special node. Rerun
+Standalone Xray-core installs receive the same Russian-destination egress policy
+as every other general-purpose VPnBot proxy. Xray does not keep its own domain
+lists or per-protocol disable switch: `vpnbot_xray_route_heal.py` reads the
+canonical `assets/vpnbot_egress_policy.json` projection installed as
+`/etc/vpnbot/egress-policy.json`. Rerun
 `/usr/local/bin/vpnbot-xray-heal-routes` on an installed standalone node to
-refresh `roscomvpn-geosite.dat`, reapply the managed routing rules, validate
+refresh the policy-owned GeoSite data, reapply managed routing rules, validate
 Xray, and trigger nginx route-sync without editing JSON by hand.
 
 Standalone Xray-core installs also include `vpnbot-node-watchdog.timer`. This is
@@ -142,6 +121,9 @@ Leave the default `VPNBOT_NGINX_AUTOSTART=1` for normal fresh installs.
 all general-purpose proxy products. The declarative source of truth is
 `assets/vpnbot_egress_policy.json`; protocol installers must not maintain a
 second independent list of Russian domains or business exceptions.
+Per-protocol environment variables must not disable or extend this policy. A
+policy exception or source change belongs in the canonical JSON and is then
+projected consistently into every adapter.
 
 The policy deliberately uses protocol-aware adapters instead of rejecting all
 root-owned `OUTPUT` traffic:
