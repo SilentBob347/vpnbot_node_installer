@@ -2400,6 +2400,18 @@ download_node_installer_asset() {
 }
 
 
+install_shared_egress_policy() {
+    local installer
+    installer="$(mktemp)"
+    download_node_installer_asset "scripts/install_egress_policy.sh" "${installer}" 755
+    VPNBOT_NODE_INSTALLER_LOCAL_ROOT="${VPNBOT_NODE_INSTALLER_LOCAL_ROOT:-}" \
+    VPNBOT_NODE_INSTALLER_BASE_URL="${VPNBOT_NODE_INSTALLER_BASE_URL}" \
+        bash "${installer}"
+    rm -f "${installer}"
+    log "Installed canonical VPnBot egress policy"
+}
+
+
 write_xrayctl_assets() {
     download_node_installer_asset "assets/vpnbot_xrayctl.py" "${XRAY_CTL_SCRIPT}" 755
     log "Installed Xray-core local control helper: ${XRAY_CTL_SCRIPT}"
@@ -4050,6 +4062,7 @@ main() {
     collect_interactive_defaults
     sync_domain_aliases
     install_dependencies
+    install_shared_egress_policy
     configure_ssh_control_plane_guard
     configure_vpnbot_network_limits
     configure_dynv6_domain

@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "policy_id": "vpnbot-ru-egress-v1",
+  "geoip": {
+    "ipv4_url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/ru.list",
+    "ipv6_url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/ru.list",
+    "minimum_ipv4_networks": 5000,
+    "minimum_ipv6_networks": 5000,
+    "refresh_interval_seconds": 21600
+  },
+  "hysteria": {
+    "geoip_url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat",
+    "geosite_url": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
+  },
+  "blocked_domain_suffixes": [
+    "ru",
+    "su",
+    "xn--p1ai"
+  ],
+  "blocked_domain_hosts": [
+    "ya.ru",
+    "yandex.com",
+    "yandex.net",
+    "yastatic.net",
+    "vk.com"
+  ],
+  "allowed_domain_suffixes": [
+    "pally.info",
+    "pal24.pro",
+    "donatepay.ru",
+    "donationalerts.com",
+    "www.donationalerts.com",
+    "kodikplayer.com",
+    "kodikres.com",
+    "kodik-cdn.com",
+    "habr.com",
+    "habrastorage.org",
+    "hsto.org",
+    "lordfilm.ru",
+    "lordfilm.com",
+    "lordfilm.tv",
+    "lordfilm.lu",
+    "lordfilm.gg",
+    "lordfilm.black",
+    "lordfilm.film",
+    "lordfilm1.ru",
+    "lordfilm2.ru",
+    "lordfilm2025.ru",
+    "majestic-rp.ru",
+    "majestic-launcher.ru",
+    "majestic-files.net",
+    "majestic-files.com",
+    "gta5majestic.com"
+  ],
+  "force_direct_domain_suffixes": [
+    "rutracker.org",
+    "rutracker.cc",
+    "static.rutracker.cc",
+    "bingwallpaper.anerg.com",
+    "koreanrandom.com"
+  ],
+  "forward_interfaces": [
+    "awg0",
+    "wg0"
+  ],
+  "process_users": [
+    "vpnbot-socks"
+  ],
+  "dns_redirect_port": 15354,
+  "dns_upstreams": [
+    "1.1.1.1",
+    "1.0.0.1"
+  ]
+}

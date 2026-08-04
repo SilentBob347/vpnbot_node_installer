@@ -1,5 +1,6 @@
 from pathlib import Path
 import importlib
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -96,6 +97,109 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn("vpnbot-allow-rutracker-domains", self.text)
         self.assertIn('"outboundTag": "direct"', self.text)
 
+    def test_installer_applies_shared_egress_policy_before_xray_setup(self):
+        main_start = self.text.rindex("main() {")
+        main_body = self.text[main_start:]
+        self.assertIn("install_shared_egress_policy", main_body)
+        self.assertLess(
+            main_body.index("install_shared_egress_policy"),
+            main_body.index("install_standalone_xray_core"),
+        )
+        self.assertTrue((REPO_ROOT / "scripts" / "install_egress_policy.sh").is_file())
+        self.assertTrue((REPO_ROOT / "assets" / "vpnbot_egress_policy.json").is_file())
+        egress_installer = (REPO_ROOT / "scripts" / "install_egress_policy.sh").read_text(encoding="utf-8")
+        self.assertIn("Requires=vpnbot-egress-dns.service", egress_installer)
+        self.assertIn("ExecStopPost=${HELPER} --config ${CONFIG} disable-dns-redirect", egress_installer)
+
+
+class SharedEgressPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = importlib.import_module("assets.vpnbot_egress_policy")
+        self.config_path = REPO_ROOT / "assets" / "vpnbot_egress_policy.json"
+        self.config = self.helper.load_config(self.config_path)
+
+    def test_exception_precedes_domain_and_geoip_rejects_in_hysteria_acl(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            path = Path(raw_tmp) / "hysteria.acl"
+            self.helper.render_hysteria_acl(self.config, path)
+            lines = path.read_text(encoding="utf-8").splitlines()
+
+        self.assertLess(lines.index("direct(suffix:donatepay.ru)"), lines.index("reject(suffix:ru)"))
+        self.assertLess(lines.index("reject(geosite:category-ru)"), lines.index("reject(geoip:ru)"))
+        self.assertEqual(lines[-1], "direct(all)")
+
+    def test_dns_policy_uses_specific_exception_before_blocked_suffix(self):
+        with tempfile.TemporaryDirectory() as raw_tmp, mock.patch.object(
+            self.helper,
+            "_existing_interfaces",
+            return_value=["awg0", "wg0"],
+        ):
+            path = Path(raw_tmp) / "dnsmasq.conf"
+            self.helper.write_dnsmasq_config(self.config, path)
+            lines = path.read_text(encoding="utf-8").splitlines()
+
+        exception = next(i for i, line in enumerate(lines) if line.startswith("server=/donatepay.ru/1.1.1.1"))
+        blocked = lines.index("server=/ru/")
+        self.assertLess(exception, blocked)
+        self.assertIn("# Protected tunnel interfaces: awg0,wg0", lines)
+        self.assertIn("pid-file=", lines)
+        self.assertIn("bind-interfaces", lines)
+        self.assertFalse(any(line == "listen-address=0.0.0.0,::" for line in lines))
+
+    def test_3proxy_acl_uses_exact_and_subdomain_patterns(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            path = Path(raw_tmp) / "3proxy.acl"
+            self.helper.render_3proxy_acl(self.config, path)
+            text = path.read_text(encoding="utf-8")
+
+        self.assertIn("allow * * donatepay.ru,*.donatepay.ru", text)
+        self.assertIn("deny * * ru,*.ru", text)
+        self.assertTrue(text.rstrip().endswith("allow *"))
+
+    def test_3proxy_reconciliation_is_idempotent_and_removes_root_daemon_mode(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            config = root / "3proxy.cfg"
+            acl = root / "3proxy.acl"
+            config.write_text(
+                "daemon\npidfile /run/3proxy.pid\nauth strong\nallow *\nsocks -p1080\n"
+                "flush\nallow *\nproxy -p3128\nflush\n",
+                encoding="utf-8",
+            )
+            self.helper.render_3proxy_acl(self.config, acl)
+            self.helper.reconcile_3proxy_config(config, acl)
+            first = config.read_text(encoding="utf-8")
+            self.helper.reconcile_3proxy_config(config, acl)
+            second = config.read_text(encoding="utf-8")
+
+        self.assertEqual(first, second)
+        self.assertNotIn("daemon\n", first)
+        self.assertNotIn("pidfile /run/3proxy.pid", first)
+        self.assertEqual(first.count(self.helper.THREEPROXY_BEGIN), 2)
+        self.assertEqual(first.count("deny * * ru,*.ru"), 2)
+
+    def test_hysteria_reconciliation_is_idempotent_and_refuses_foreign_acl(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            config = root / "config.yaml"
+            config.write_text('listen: ":443"\nmasquerade:\n  type: proxy\n', encoding="utf-8")
+            kwargs = {
+                "acl_path": root / "egress.acl",
+                "geoip_path": root / "geoip.dat",
+                "geosite_path": root / "geosite.dat",
+            }
+            self.helper.reconcile_hysteria_config(config, **kwargs)
+            first = config.read_text(encoding="utf-8")
+            self.helper.reconcile_hysteria_config(config, **kwargs)
+            second = config.read_text(encoding="utf-8")
+            foreign = root / "foreign.yaml"
+            foreign.write_text('listen: ":443"\nacl:\n  inline: []\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not owned by VPnBot"):
+                self.helper.reconcile_hysteria_config(foreign, **kwargs)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.count(self.helper.HYSTERIA_BEGIN), 1)
+
 
 class XrayRouteHealRulesTests(unittest.TestCase):
     def setUp(self):
@@ -138,6 +242,38 @@ class XrayRouteHealRulesTests(unittest.TestCase):
         self.assertLess(direct_index, torrent_index)
         for matcher in forced:
             self.assertIn(matcher, direct_rule["domain"])
+
+    def test_route_heal_reads_shared_policy_as_source_of_truth(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            routing_path = tmp / "10_routing.json"
+            policy_path = tmp / "egress-policy.json"
+            routing_path.write_text('{"routing":{"rules":[]}}\n', encoding="utf-8")
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "blocked_domain_suffixes": ["test"],
+                        "blocked_domain_hosts": ["blocked.example"],
+                        "allowed_domain_suffixes": ["allowed.test"],
+                        "force_direct_domain_suffixes": ["direct.example"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                "os.environ",
+                {"VPNBOT_EGRESS_POLICY_CONFIG": str(policy_path)},
+                clear=False,
+            ):
+                payload, summary, _changed = self.route_heal.heal_routing(routing_path, tmp)
+
+        self.assertIn(r"regexp:\.test$", summary["domains"])
+        self.assertIn("domain:blocked.example", summary["domains"])
+        self.assertIn("domain:allowed.test", summary["allow_domains"])
+        self.assertIn("domain:direct.example", summary["force_direct_domains"])
+        tags = {rule.get("ruleTag") for rule in payload["routing"]["rules"]}
+        self.assertIn("vpnbot-block-ru-domains", tags)
 
 
 class VlessPresetHelperTlsDomainTests(unittest.TestCase):

@@ -136,6 +136,37 @@ owns public HTTP/TCP ports, set `VPNBOT_NGINX_AUTOSTART=0`. Route sync will
 still validate and write generated files, but it will not try to start nginx.
 Leave the default `VPNBOT_NGINX_AUTOSTART=1` for normal fresh installs.
 
+## Shared Russian-destination egress policy
+
+`scripts/install_egress_policy.sh` installs the node-wide VPnBot policy used by
+all general-purpose proxy products. The declarative source of truth is
+`assets/vpnbot_egress_policy.json`; protocol installers must not maintain a
+second independent list of Russian domains or business exceptions.
+
+The policy deliberately uses protocol-aware adapters instead of rejecting all
+root-owned `OUTPUT` traffic:
+
+- Xray reads the shared domain policy through `vpnbot_xray_route_heal.py`;
+- Hysteria 2 receives a managed native ACL with domain sniffing, GeoSite and
+  GeoIP rules;
+- WireGuard and AmneziaWG are protected in `FORWARD`, and plaintext client DNS
+  is redirected to a dedicated filtered dnsmasq instance;
+- 3proxy runs as the dedicated `vpnbot-socks` account, so owner-scoped
+  `OUTPUT` rules affect the proxy without blocking nginx, ACME, SSH or Xray.
+
+Allowed domains are evaluated before Russian-domain and Russian-IP rejects.
+The GeoIP cache refreshes every six hours, while the 15-minute systemd timer
+also repairs deleted firewall hooks without repeatedly downloading the source
+list. Each installer run stores the previous configs, units and firewall state
+under `/var/backups/vpnbot-egress-policy/` before making changes.
+
+The DNS service is a required dependency of the redirect. If it stops or cannot
+bind, `ExecStopPost` removes the redirect immediately; the policy never leaves
+VPN clients pointed at a dead local DNS port. The tunnel firewall still blocks
+Russian destination IPs. As with every DNS-based domain policy, encrypted DNS
+on arbitrary non-Russian endpoints cannot be classified by the kernel; native
+Xray, Hysteria and SOCKS domain adapters provide the stronger domain layer.
+
 ## Latest Policy
 
 This repository intentionally uses `main` as latest. New installs always fetch

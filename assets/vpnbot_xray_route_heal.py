@@ -44,6 +44,33 @@ def split_list(value: str) -> list[str]:
     return out
 
 
+def load_shared_egress_policy() -> dict[str, Any] | None:
+    path = Path(
+        os.environ.get(
+            "VPNBOT_EGRESS_POLICY_CONFIG",
+            "/etc/vpnbot/egress-policy.json",
+        )
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        return None
+    return payload
+
+
+def policy_domains(policy: dict[str, Any] | None, key: str) -> list[str]:
+    if not policy or not isinstance(policy.get(key), list):
+        return []
+    out: list[str] = []
+    for raw in policy[key]:
+        domain = str(raw or "").strip().lower().rstrip(".")
+        if domain and domain not in out:
+            out.append(domain)
+    return out
+
+
 def exact_legacy_rule(rule: dict[str, Any], key: str, values: list[str]) -> bool:
     if rule.get("type") != "field" or rule.get("outboundTag") != "block":
         return False
@@ -81,16 +108,24 @@ def download_file(url: str, target: Path, *, timeout: int = 20) -> bool:
 
 
 def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
-    default_domains = [
-        "regexp:\\.ru$",
-        "regexp:\\.su$",
-        "regexp:\\.xn--p1ai$",
-        "domain:ya.ru",
-        "domain:yandex.com",
-        "domain:yandex.net",
-        "domain:yastatic.net",
-        "domain:vk.com",
-    ]
+    policy = load_shared_egress_policy()
+    blocked_suffixes = policy_domains(policy, "blocked_domain_suffixes")
+    blocked_hosts = policy_domains(policy, "blocked_domain_hosts")
+    default_domains = (
+        [f"regexp:\\.{suffix}$" for suffix in blocked_suffixes]
+        + [f"domain:{domain}" for domain in blocked_hosts]
+        if blocked_suffixes or blocked_hosts
+        else [
+            "regexp:\\.ru$",
+            "regexp:\\.su$",
+            "regexp:\\.xn--p1ai$",
+            "domain:ya.ru",
+            "domain:yandex.com",
+            "domain:yandex.net",
+            "domain:yastatic.net",
+            "domain:vk.com",
+        ]
+    )
     default_ips = ["geoip:ru"]
     default_torrent_domains = [
         "domain:tracker.opentrackr.org",
@@ -201,25 +236,31 @@ def build_default_rules(share_dir: Path) -> tuple[list[str], list[str], list[str
     ips = default_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_RU_EXTRA_IPS", ""))
     torrent_domains = default_torrent_domains + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_DOMAINS", ""))
     torrent_ips = default_torrent_ips + split_list(os.environ.get("VPNBOT_XRAY_BLOCK_TORRENT_EXTRA_IPS", ""))
+    policy_force_direct = [
+        f"domain:{domain}"
+        for domain in policy_domains(policy, "force_direct_domain_suffixes")
+    ]
+    policy_allow = [
+        f"domain:{domain}"
+        for domain in policy_domains(policy, "allowed_domain_suffixes")
+    ]
     force_direct_domains = split_list(
-        os.environ.get(
-            "VPNBOT_XRAY_FORCE_DIRECT_DOMAINS",
-            "domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc,"
-            "domain:bingwallpaper.anerg.com,domain:koreanrandom.com",
-        )
+        os.environ.get("VPNBOT_XRAY_FORCE_DIRECT_DOMAINS", "")
+    ) or policy_force_direct or split_list(
+        "domain:rutracker.org,domain:rutracker.cc,domain:static.rutracker.cc,"
+        "domain:bingwallpaper.anerg.com,domain:koreanrandom.com"
     )
     allow_domains = split_list(
-        os.environ.get(
-            "VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS",
-            "domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,"
-            "domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,"
-            "domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,"
-            "domain:lordfilm.ru,domain:lordfilm.com,"
-            "domain:lordfilm.tv,domain:lordfilm.lu,domain:lordfilm.gg,domain:lordfilm.black,"
-            "domain:lordfilm.film,domain:lordfilm1.ru,domain:lordfilm2.ru,domain:lordfilm2025.ru,"
-            "domain:majestic-rp.ru,domain:majestic-launcher.ru,"
-            "domain:majestic-files.net,domain:majestic-files.com,domain:gta5majestic.com",
-        )
+        os.environ.get("VPNBOT_XRAY_RU_EGRESS_ALLOW_DOMAINS", "")
+    ) or policy_allow or split_list(
+        "domain:pally.info,domain:pal24.pro,domain:donatepay.ru,domain:donationalerts.com,"
+        "domain:www.donationalerts.com,domain:kodikplayer.com,domain:kodikres.com,"
+        "domain:kodik-cdn.com,domain:habr.com,domain:habrastorage.org,domain:hsto.org,"
+        "domain:lordfilm.ru,domain:lordfilm.com,domain:lordfilm.tv,domain:lordfilm.lu,"
+        "domain:lordfilm.gg,domain:lordfilm.black,domain:lordfilm.film,domain:lordfilm1.ru,"
+        "domain:lordfilm2.ru,domain:lordfilm2025.ru,domain:majestic-rp.ru,"
+        "domain:majestic-launcher.ru,domain:majestic-files.net,domain:majestic-files.com,"
+        "domain:gta5majestic.com"
     )
     return domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips
 
