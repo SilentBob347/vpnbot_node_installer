@@ -27,6 +27,16 @@ require_root() {
 }
 
 install_packages() {
+    local binary missing=0
+    for binary in python3 curl ipset iptables dnsmasq dig; do
+        if ! command -v "${binary}" >/dev/null 2>&1; then
+            missing=1
+            break
+        fi
+    done
+    if [[ "${missing}" -eq 0 ]]; then
+        return 0
+    fi
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null
     apt-get install -y --no-install-recommends python3 curl ipset iptables dnsmasq-base dnsutils >/dev/null

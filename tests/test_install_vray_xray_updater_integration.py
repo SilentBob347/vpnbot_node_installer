@@ -122,6 +122,7 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn("for attempt in $(seq 1 80)", egress_installer)
         self.assertIn("dnsmasq-base dnsutils", egress_installer)
         self.assertIn("Leaving foreign 3proxy configuration outside VPnBot policy ownership", egress_installer)
+        self.assertIn('for binary in python3 curl ipset iptables dnsmasq dig', egress_installer)
 
 
 class SharedEgressPolicyTests(unittest.TestCase):
