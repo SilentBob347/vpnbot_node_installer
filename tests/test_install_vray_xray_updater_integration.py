@@ -211,6 +211,9 @@ class SharedEgressPolicyTests(unittest.TestCase):
                     config_path.read_text(encoding="utf-8"),
                 )
 
+                records = self.helper.ai_dns_records(extension)
+                self.assertEqual(records, [("gemini.google.com", "192.0.2.10")])
+
     def test_ai_local_dns_redirect_exempts_resolver_upstreams_before_redirect(self):
         calls = []
 
@@ -234,6 +237,34 @@ class SharedEgressPolicyTests(unittest.TestCase):
         self.assertEqual(len(redirect_rules), 2)
         self.assertTrue(all("--to-ports" in row for row in redirect_rules))
         self.assertTrue(any(row[:4] == ["iptables", "-t", "nat", "-I"] and "OUTPUT" in row for row in calls))
+
+    def test_ai_dns_records_are_allowed_before_ru_rejects(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            extension = Path(raw_tmp) / "managed-dnsmasq.conf"
+            extension.write_text(
+                "host-record=chatgpt.com,87.228.47.204\n"
+                "host-record=gemini.google.com,31.77.140.129\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(self.helper, "AI_DNSMASQ_EXTENSION", extension), mock.patch.object(
+                self.helper,
+                "_kernel_policy_has_consumers",
+                return_value=False,
+            ), mock.patch.object(
+                self.helper,
+                "run",
+                return_value=mock.Mock(returncode=0, stdout="[]", stderr=""),
+            ):
+                addresses = self.helper.exception_addresses(self.config)
+                acl = Path(raw_tmp) / "hysteria.acl"
+                self.helper.render_hysteria_acl(self.config, acl)
+                lines = acl.read_text(encoding="utf-8").splitlines()
+
+        self.assertIn("87.228.47.204", addresses[4])
+        self.assertLess(
+            lines.index("direct(suffix:chatgpt.com)"),
+            lines.index("reject(geoip:ru)"),
+        )
 
     def test_3proxy_acl_uses_exact_and_subdomain_patterns(self):
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -377,6 +408,23 @@ class XrayRouteHealRulesTests(unittest.TestCase):
         self.assertIn("domain:direct.example", summary["force_direct_domains"])
         tags = {rule.get("ruleTag") for rule in payload["routing"]["rules"]}
         self.assertIn("vpnbot-block-ru-domains", tags)
+
+    def test_route_heal_allows_activated_ai_hosts_before_ru_ip_block(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            routing_path = tmp / "10_routing.json"
+            extension = tmp / "managed-dnsmasq.conf"
+            routing_path.write_text('{"routing":{"rules":[]}}\n', encoding="utf-8")
+            extension.write_text("host-record=chatgpt.com,87.228.47.204\n", encoding="utf-8")
+            policy = json.loads((REPO_ROOT / "assets" / "vpnbot_egress_policy.json").read_text())
+            with mock.patch.object(self.route_heal, "AI_DNSMASQ_EXTENSION", extension):
+                payload, summary, _changed = self.route_heal.heal_routing(routing_path, tmp, policy)
+
+        self.assertIn("domain:chatgpt.com", summary["allow_domains"])
+        rules = payload["routing"]["rules"]
+        allow_index = next(i for i, rule in enumerate(rules) if rule.get("ruleTag") == "vpnbot-allow-ru-egress-domains")
+        block_index = next(i for i, rule in enumerate(rules) if rule.get("ruleTag") == "vpnbot-block-ru-ips")
+        self.assertLess(allow_index, block_index)
 
     def test_route_heal_fails_closed_without_canonical_policy(self):
         with tempfile.TemporaryDirectory() as raw_tmp:

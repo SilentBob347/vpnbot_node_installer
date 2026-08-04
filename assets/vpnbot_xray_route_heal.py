@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +19,7 @@ from typing import Any
 TRUTHY = {"1", "true", "yes", "on"}
 FALSY = {"0", "false", "no", "off"}
 DEFAULT_POLICY_CONFIG = Path("/etc/vpnbot/egress-policy.json")
+AI_DNSMASQ_EXTENSION = Path("/etc/vpnbot-ai-access/managed-dnsmasq.conf")
 MANAGED_TAGS = {
     "vpnbot-allow-rutracker-domains",
     "vpnbot-allow-ru-egress-domains",
@@ -80,6 +83,40 @@ def policy_domains(policy: dict[str, Any], key: str) -> list[str]:
         if domain and domain not in out:
             out.append(domain)
     return out
+
+
+def ai_dns_hosts(path: Path | None = None) -> list[str]:
+    path = path or AI_DNSMASQ_EXTENSION
+    if not path.is_file():
+        return []
+    hosts: list[str] = []
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        prefix = "host-record="
+        if not line.startswith(prefix):
+            raise ValueError(f"{path}:{number}: unsupported AI DNS directive")
+        fields = [item.strip() for item in line[len(prefix):].split(",")]
+        if len(fields) != 2:
+            raise ValueError(f"{path}:{number}: expected exact host-record=host,ip")
+        host, raw_ip = fields
+        try:
+            ipaddress.ip_address(raw_ip)
+        except ValueError as exc:
+            raise ValueError(f"{path}:{number}: invalid AI DNS address") from exc
+        normalized = host.lower().rstrip(".")
+        if not re.fullmatch(
+            r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9][A-Za-z0-9-]{0,62}",
+            normalized,
+        ):
+            raise ValueError(f"{path}:{number}: invalid AI DNS host")
+        if normalized in hosts:
+            raise ValueError(f"{path}:{number}: duplicate AI DNS host")
+        hosts.append(normalized)
+    if not hosts:
+        raise ValueError(f"{path}: activated AI DNS fragment is empty")
+    return hosts
 
 
 def exact_legacy_rule(rule: dict[str, Any], key: str, values: list[str]) -> bool:
@@ -245,6 +282,7 @@ def build_default_rules(
         f"domain:{domain}"
         for domain in policy_domains(policy, "allowed_domain_suffixes")
     ]
+    policy_allow.extend(f"domain:{host}" for host in ai_dns_hosts())
     force_direct_domains = policy_force_direct
     allow_domains = policy_allow
     return domains, ips, allow_domains, force_direct_domains, torrent_domains, torrent_ips
@@ -480,6 +518,7 @@ def main() -> int:
     )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON report")
     parser.add_argument("--no-sync", action="store_true", help="do not run the nginx route sync helper")
+    parser.add_argument("--no-download", action="store_true", help="do not refresh external geosite assets")
     parser.add_argument("--no-restart", action="store_true", help="write files but do not restart Xray")
     args = parser.parse_args()
 
@@ -504,7 +543,7 @@ def main() -> int:
         geosite_file = str(xray_policy["external_geosite_file"])
         geosite_target = share_dir / geosite_file
         geosite_changed = False
-        if geosite_url and not args.check:
+        if geosite_url and not args.check and not args.no_download:
             try:
                 geosite_changed = download_file(geosite_url, geosite_target)
             except Exception as exc:
