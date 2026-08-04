@@ -84,6 +84,25 @@ replaces the managed JSON, validates and restarts Xray, synchronizes nginx
 routes, and rolls the original bytes and service state back if any apply step
 fails. Existing client links do not need to be reissued because their public
 identity is not changed.
+
+If no compatible upstream can complete a real REALITY client handshake under
+the already-published `serverName`, migrate the complete SNI pair instead:
+
+```bash
+vpnbot-vless-presets --migrate-reality-sni <inbound-id> <new-sni> --ack-links-reissue
+```
+
+This is deliberately a separate, explicit operation because it changes a
+field embedded in client links. The inbound's derived id, tag, listen/public
+ports, REALITY private/public key pair, short IDs and client UUIDs remain
+unchanged; `dest`, `serverNames` and the matching nginx SNI route move
+together. If clients already exist, the command refuses to run without
+`--ack-links-reissue`. After success, the control plane must immediately
+regenerate every stored link for that inbound. The helper validates the new
+SNI against the installed pool, tests the exact TLS pair, writes a root-only
+backup, validates/restarts Xray, synchronizes nginx and restores the original
+bytes and service state on failure.
+
 New REALITY inbounds use `fp=edge` by default through
 `VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets use `fp=edge` unless
 `VPNBOT_TLS_FINGERPRINT` is overridden deliberately.

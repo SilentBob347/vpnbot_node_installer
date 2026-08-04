@@ -1009,6 +1009,109 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
                     "10.0.0.1",
                 )
 
+    def test_migrate_sni_preserves_server_identity_and_requires_link_reissue(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            managed = Path(raw_tmp) / "managed.json"
+            original = {"inbounds": [self._row()]}
+            managed.write_text(json.dumps(original), encoding="utf-8")
+            original_id = self.helper.stable_inbound_id(self._row())
+            with (
+                mock.patch.object(self.helper, "XRAY_MANAGED_INBOUNDS_FILE", managed),
+                mock.patch.object(
+                    self.helper,
+                    "list_reality_sni_pool",
+                    return_value=["www.microsoft.com", "rutube.ru"],
+                ),
+                mock.patch.object(
+                    self.helper,
+                    "is_reality_dest_reachable",
+                    return_value=True,
+                ) as reachable,
+                mock.patch.object(self.helper, "sync_xray_reserved_ports"),
+                mock.patch.object(self.helper, "validate_and_restart_xray"),
+                mock.patch.object(self.helper.subprocess, "run"),
+            ):
+                result = self.helper.migrate_reality_sni(
+                    original_id,
+                    "rutube.ru",
+                    acknowledge_link_reissue=True,
+                )
+
+            updated = json.loads(managed.read_text(encoding="utf-8"))
+            row = updated["inbounds"][0]
+            reality = row["streamSettings"]["realitySettings"]
+            self.assertEqual(0, result)
+            self.assertEqual(original_id, self.helper.stable_inbound_id(row))
+            self.assertEqual(self._row()["tag"], row["tag"])
+            self.assertEqual(self._row()["settings"], row["settings"])
+            self.assertEqual(
+                self._row()["streamSettings"]["realitySettings"]["privateKey"],
+                reality["privateKey"],
+            )
+            self.assertEqual(
+                self._row()["streamSettings"]["realitySettings"]["shortIds"],
+                reality["shortIds"],
+            )
+            self.assertEqual("rutube.ru:443", reality["dest"])
+            self.assertEqual(["rutube.ru"], reality["serverNames"])
+            reachable.assert_called_once_with("rutube.ru:443", server_name="rutube.ru")
+            backups = list(managed.parent.glob("managed.json.bak.migrate-sni-*"))
+            self.assertEqual(1, len(backups))
+            self.assertEqual(original, json.loads(backups[0].read_text(encoding="utf-8")))
+            self.assertEqual(0o600, backups[0].stat().st_mode & 0o777)
+
+    def test_migrate_sni_refuses_clients_without_reissue_acknowledgement(self):
+        row = self._row()
+        with (
+            mock.patch.object(
+                self.helper,
+                "load_xray_inbounds",
+                return_value=({"inbounds": [row]}, [row]),
+            ),
+            mock.patch.object(
+                self.helper,
+                "list_reality_sni_pool",
+                return_value=["www.microsoft.com", "rutube.ru"],
+            ),
+            mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
+        ):
+            with self.assertRaisesRegex(SystemExit, "--ack-links-reissue"):
+                self.helper.migrate_reality_sni(
+                    self.helper.stable_inbound_id(row),
+                    "rutube.ru",
+                )
+
+    def test_migrate_sni_rolls_back_original_bytes_when_validation_fails(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            managed = Path(raw_tmp) / "managed.json"
+            original = {"inbounds": [self._row()]}
+            original_bytes = json.dumps(original, separators=(",", ":")).encode("utf-8")
+            managed.write_bytes(original_bytes)
+            with (
+                mock.patch.object(self.helper, "XRAY_MANAGED_INBOUNDS_FILE", managed),
+                mock.patch.object(
+                    self.helper,
+                    "list_reality_sni_pool",
+                    return_value=["www.microsoft.com", "rutube.ru"],
+                ),
+                mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
+                mock.patch.object(self.helper, "sync_xray_reserved_ports"),
+                mock.patch.object(
+                    self.helper,
+                    "validate_and_restart_xray",
+                    side_effect=[RuntimeError("invalid"), None],
+                ),
+                mock.patch.object(self.helper.subprocess, "run"),
+            ):
+                with self.assertRaisesRegex(SystemExit, "managed file"):
+                    self.helper.migrate_reality_sni(
+                        self.helper.stable_inbound_id(self._row()),
+                        "rutube.ru",
+                        acknowledge_link_reissue=True,
+                    )
+
+            self.assertEqual(original_bytes, managed.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()

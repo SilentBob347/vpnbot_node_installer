@@ -1392,6 +1392,129 @@ def retarget_reality_dest(inbound_id: int, requested_dest: str) -> int:
     return 0
 
 
+def migrate_reality_sni(
+    inbound_id: int,
+    requested_sni: str,
+    *,
+    acknowledge_link_reissue: bool = False,
+) -> int:
+    """Replace a broken REALITY SNI while preserving server credentials.
+
+    This changes a field embedded in every issued client link. The inbound tag
+    is deliberately preserved so its derived control-plane id remains stable.
+    Existing UUIDs, REALITY keys, short ids, ports and clients are retained,
+    but the control plane must regenerate stored links after this succeeds.
+    """
+
+    try:
+        wanted_id = int(inbound_id)
+    except (TypeError, ValueError):
+        raise SystemExit("REALITY inbound id должен быть целым числом") from None
+    if wanted_id <= 0:
+        raise SystemExit("REALITY inbound id должен быть положительным")
+
+    _, current_rows = load_xray_inbounds()
+    matches = [
+        row
+        for row in current_rows
+        if isinstance(row, dict) and stable_inbound_id(row) == wanted_id
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"REALITY inbound id={wanted_id} должен существовать ровно один раз"
+        )
+    current = matches[0]
+    stream = current.get("streamSettings") or {}
+    if str(stream.get("security") or "").strip().lower() != "reality":
+        raise SystemExit(f"Inbound id={wanted_id} не использует REALITY")
+    reality = stream.get("realitySettings") or {}
+    if not isinstance(reality, dict):
+        raise SystemExit(f"Inbound id={wanted_id} имеет некорректные realitySettings")
+
+    new_sni = normalize_sni(requested_sni)
+    if not new_sni or new_sni not in set(list_reality_sni_pool()):
+        raise SystemExit("Новый REALITY SNI должен быть именем из общего SNI pool")
+    new_dest = normalize_reality_dest(new_sni)
+    if REALITY_DEST_CHECK and not is_reality_dest_reachable(
+        new_dest,
+        server_name=new_sni,
+    ):
+        raise SystemExit(
+            f"Новая REALITY пара serverName={new_sni} dest={new_dest} "
+            "недоступна с этой ноды: TLS handshake не прошёл"
+        )
+
+    old_names = [
+        normalize_sni(item)
+        for item in reality.get("serverNames") or []
+        if normalize_sni(item)
+    ]
+    if not old_names:
+        raise SystemExit(
+            f"Inbound id={wanted_id} не имеет сохранённого REALITY serverName"
+        )
+    old_dest = normalize_reality_dest(str(reality.get("dest") or ""))
+    clients = (current.get("settings") or {}).get("clients") or []
+    client_count = sum(1 for item in clients if isinstance(item, dict))
+    if client_count and not acknowledge_link_reissue:
+        raise SystemExit(
+            "Отказ от смены REALITY SNI: inbound уже содержит "
+            f"клиентов (clients={client_count}). Повторите команду с "
+            "--ack-links-reissue только когда control plane готов сразу "
+            "пересобрать сохранённые ссылки этих клиентов."
+        )
+    if old_names == [new_sni] and old_dest == new_dest:
+        print(
+            "REALITY SNI уже установлена: "
+            f"inbound_id={wanted_id} server_name={new_sni} "
+            f"clients_preserved={client_count} links_reissue_required=0"
+        )
+        return 0
+
+    original_bytes = XRAY_MANAGED_INBOUNDS_FILE.read_bytes()
+    backup_path = XRAY_MANAGED_INBOUNDS_FILE.with_name(
+        f"{XRAY_MANAGED_INBOUNDS_FILE.name}.bak.migrate-sni-"
+        f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
+    )
+    backup_path.write_bytes(original_bytes)
+    backup_path.chmod(0o600)
+
+    updated_rows = deepcopy(current_rows)
+    updated = next(row for row in updated_rows if stable_inbound_id(row) == wanted_id)
+    updated_reality = updated["streamSettings"]["realitySettings"]
+    updated_reality["dest"] = new_dest
+    updated_reality["serverNames"] = [new_sni]
+    try:
+        save_xray_inbounds_atomic(updated_rows)
+        sync_xray_reserved_ports(updated_rows)
+        validate_and_restart_xray()
+        subprocess.run([XRAY_SYNC_SCRIPT], check=True)
+    except Exception as exc:
+        restore_xray_inbounds_atomic(original_bytes)
+        try:
+            sync_xray_reserved_ports(current_rows)
+            validate_and_restart_xray()
+            subprocess.run([XRAY_SYNC_SCRIPT], check=True)
+        except Exception:
+            pass
+        raise SystemExit(
+            "Не удалось сменить REALITY SNI; managed file и служба "
+            f"откачены: {type(exc).__name__}"
+        ) from exc
+
+    print("REALITY SNI migration complete")
+    print(f"- inbound_id_preserved={wanted_id}")
+    print(f"- tag_preserved={current.get('tag') or '<empty>'}")
+    print(f"- old_server_names={','.join(old_names)}")
+    print(f"- new_server_name={new_sni}")
+    print(f"- old_dest={old_dest or '<empty>'}")
+    print(f"- new_dest={new_dest}")
+    print(f"- clients_preserved={client_count}")
+    print(f"- links_reissue_required={client_count}")
+    print(f"- backup={backup_path}")
+    return 0
+
+
 def apply_lines_via_xray(lines: list[str], *, replace: bool = False) -> int:
     _, rows = load_xray_inbounds()
     if replace:
@@ -1493,6 +1616,19 @@ def main(argv: list[str]) -> int:
                 "<inbound-id> <new-sni-or-dest>"
             )
         return retarget_reality_dest(argv[2], argv[3])
+    if len(argv) > 1 and argv[1] == "--migrate-reality-sni":
+        if len(argv) not in {4, 5} or (
+            len(argv) == 5 and argv[4] != "--ack-links-reissue"
+        ):
+            raise SystemExit(
+                "Usage: vpnbot-vless-presets --migrate-reality-sni "
+                "<inbound-id> <new-sni> [--ack-links-reissue]"
+            )
+        return migrate_reality_sni(
+            argv[2],
+            argv[3],
+            acknowledge_link_reissue="--ack-links-reissue" in argv[4:],
+        )
     if len(argv) > 1 and argv[1] == "--line-from-sni":
         if len(argv) < 3:
             raise SystemExit("Usage: vpnbot-vless-presets --line-from-sni <sni> [vless|trojan] [tcp|xhttp] [direct-random|shared-random|443|8443] [--no-flow]")
