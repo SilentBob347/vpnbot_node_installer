@@ -508,6 +508,24 @@ def service_active(service_name: str) -> str:
     return out.strip() if out else f"exit:{code}"
 
 
+def wait_service_active(
+    service_name: str,
+    *,
+    attempts: int = 20,
+    interval: float = 0.25,
+) -> str:
+    """Wait through systemd's short activating phase after a restart."""
+
+    state = "unknown"
+    for attempt in range(attempts):
+        state = service_active(service_name)
+        if state == "active":
+            return state
+        if attempt + 1 < attempts:
+            time.sleep(interval)
+    return state
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Repair VPnBot Xray routing and shared route state")
     parser.add_argument("--check", action="store_true", help="validate and report only; do not write files or restart services")
@@ -581,6 +599,9 @@ def main() -> int:
                 report["xray_restart_tail"] = out[-1000:]
                 if code != 0:
                     raise RuntimeError("xray service restart failed")
+                report["xray_active_after_restart"] = wait_service_active(service_name)
+                if report["xray_active_after_restart"] != "active":
+                    raise RuntimeError("xray service did not become active after restart")
 
         if not args.no_sync and not args.check and not args.bootstrap and sync_script.exists():
             code, out = run([str(sync_script)], timeout=90)
@@ -589,7 +610,7 @@ def main() -> int:
             if code != 0:
                 raise RuntimeError("route sync failed")
 
-        report["xray_active"] = "not-installed" if args.bootstrap else service_active(service_name)
+        report["xray_active"] = "not-installed" if args.bootstrap else wait_service_active(service_name)
         ok = args.bootstrap or report["xray_active"] == "active"
         report["ok"] = ok
     except Exception as exc:

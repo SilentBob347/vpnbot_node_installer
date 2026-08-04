@@ -508,6 +508,21 @@ class XrayRouteHealRulesTests(unittest.TestCase):
         block_index = next(i for i, rule in enumerate(rules) if rule.get("ruleTag") == "vpnbot-block-ru-ips")
         self.assertLess(allow_index, block_index)
 
+    def test_route_heal_waits_through_systemd_activating_state(self):
+        with mock.patch.object(
+            self.route_heal,
+            "service_active",
+            side_effect=["activating", "activating", "active"],
+        ), mock.patch.object(self.route_heal.time, "sleep") as sleep:
+            state = self.route_heal.wait_service_active(
+                "vpnbot-xray.service",
+                attempts=3,
+                interval=0.1,
+            )
+
+        self.assertEqual(state, "active")
+        self.assertEqual(sleep.call_count, 2)
+
     def test_route_heal_fails_closed_without_canonical_policy(self):
         with tempfile.TemporaryDirectory() as raw_tmp:
             tmp = Path(raw_tmp)
