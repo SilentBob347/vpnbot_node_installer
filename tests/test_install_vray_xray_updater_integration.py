@@ -873,7 +873,11 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
                     "list_reality_sni_pool",
                     return_value=["www.microsoft.com", "www.nvidia.com"],
                 ),
-                mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
+                mock.patch.object(
+                    self.helper,
+                    "is_reality_dest_reachable",
+                    return_value=True,
+                ) as reachable,
                 mock.patch.object(self.helper, "sync_xray_reserved_ports"),
                 mock.patch.object(self.helper, "validate_and_restart_xray"),
                 mock.patch.object(self.helper.subprocess, "run"),
@@ -892,6 +896,10 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
             self.assertEqual(1, len(backups))
             self.assertEqual(original, json.loads(backups[0].read_text(encoding="utf-8")))
             self.assertEqual(0o600, backups[0].stat().st_mode & 0o777)
+            reachable.assert_called_once_with(
+                "www.nvidia.com:443",
+                server_name="www.microsoft.com",
+            )
 
     def test_retarget_rolls_back_exact_original_when_validation_fails(self):
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -946,6 +954,60 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
         self.assertNotIn("id", row)
         expected = 266617217
         self.assertEqual(expected, self.helper.stable_inbound_id(row))
+
+    def test_retarget_accepts_public_ip_only_with_preserved_sni_probe(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            managed = Path(raw_tmp) / "managed.json"
+            managed.write_text(
+                json.dumps({"inbounds": [self._row()]}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(self.helper, "XRAY_MANAGED_INBOUNDS_FILE", managed),
+                mock.patch.object(
+                    self.helper,
+                    "list_reality_sni_pool",
+                    return_value=["www.microsoft.com"],
+                ),
+                mock.patch.object(
+                    self.helper,
+                    "is_reality_dest_reachable",
+                    return_value=True,
+                ) as reachable,
+                mock.patch.object(self.helper, "sync_xray_reserved_ports"),
+                mock.patch.object(self.helper, "validate_and_restart_xray"),
+                mock.patch.object(self.helper.subprocess, "run"),
+            ):
+                self.helper.retarget_reality_dest(
+                    self.helper.stable_inbound_id(self._row()),
+                    "23.197.162.102",
+                )
+
+            reachable.assert_called_once_with(
+                "23.197.162.102:443",
+                server_name="www.microsoft.com",
+            )
+            updated = json.loads(managed.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "23.197.162.102:443",
+                updated["inbounds"][0]["streamSettings"]["realitySettings"]["dest"],
+            )
+
+    def test_retarget_rejects_private_ip_target(self):
+        row = self._row()
+        with (
+            mock.patch.object(self.helper, "load_xray_inbounds", return_value=({"inbounds": [row]}, [row])),
+            mock.patch.object(
+                self.helper,
+                "list_reality_sni_pool",
+                return_value=["www.microsoft.com"],
+            ),
+        ):
+            with self.assertRaisesRegex(SystemExit, "публичным глобальным IP"):
+                self.helper.retarget_reality_dest(
+                    self.helper.stable_inbound_id(row),
+                    "10.0.0.1",
+                )
 
 
 if __name__ == "__main__":

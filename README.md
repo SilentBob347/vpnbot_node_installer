@@ -74,12 +74,16 @@ retarget only its upstream TLS destination:
 vpnbot-vless-presets --retarget-reality-dest <inbound-id> <new-sni-or-dest>
 ```
 
-The replacement target must belong to the installed SNI pool and pass a live
-TLS check. The command writes a root-only backup, atomically replaces the
-managed JSON, validates and restarts Xray, synchronizes nginx routes, and rolls
-the original bytes and service state back if any apply step fails. Existing
-client links do not need to be reissued because their public identity is not
-changed.
+The replacement target must belong to the installed SNI pool or be an explicit
+public global IP. In both cases the helper connects to that exact destination
+and validates TLS against the already-published first `serverName`; checking
+the target under its own hostname would not prove that old client links remain
+compatible. A public IP is useful for pinning a different CDN edge while
+retaining an existing SNI. The command writes a root-only backup, atomically
+replaces the managed JSON, validates and restarts Xray, synchronizes nginx
+routes, and rolls the original bytes and service state back if any apply step
+fails. Existing client links do not need to be reissued because their public
+identity is not changed.
 New REALITY inbounds use `fp=edge` by default through
 `VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets use `fp=edge` unless
 `VPNBOT_TLS_FINGERPRINT` is overridden deliberately.

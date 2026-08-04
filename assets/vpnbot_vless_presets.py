@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import random
 import re
@@ -33,7 +34,7 @@ TLS_FINGERPRINT = os.environ.get("VPNBOT_TLS_FINGERPRINT", "edge").strip() or "e
 REALITY_SERVER_NAMES_SCOPE = os.environ.get("VPNBOT_REALITY_SERVER_NAMES_SCOPE", "primary").strip().lower()
 REALITY_DEST_CHECK = os.environ.get("VPNBOT_REALITY_DEST_CHECK", "1").strip().lower() not in {"0", "false", "no", "off", "нет"}
 REALITY_DEST_CHECK_TIMEOUT = float(os.environ.get("VPNBOT_REALITY_DEST_CHECK_TIMEOUT", "4"))
-REALITY_DEST_CHECK_CACHE: dict[str, bool] = {}
+REALITY_DEST_CHECK_CACHE: dict[tuple[str, str], bool] = {}
 XRAY_TCP_REALITY_DOMAINS = [
     "www.yandex.ru",
     "rutube.ru",
@@ -94,24 +95,30 @@ def normalize_reality_dest(value: str) -> str:
     return f"{raw}:443"
 
 
-def is_reality_dest_reachable(dest: str) -> bool:
+def is_reality_dest_reachable(dest: str, *, server_name: str = "") -> bool:
     normalized = normalize_reality_dest(dest)
     if not normalized:
         return False
-    cached = REALITY_DEST_CHECK_CACHE.get(normalized)
+    host, _, port_text = normalized.rpartition(":")
+    tls_server_name = normalize_sni(server_name) or host
+    cache_key = (normalized, tls_server_name)
+    cached = REALITY_DEST_CHECK_CACHE.get(cache_key)
     if cached is not None:
         return cached
-    host, _, port_text = normalized.rpartition(":")
     ok = False
     try:
         context = ssl.create_default_context()
         with socket.create_connection((host, int(port_text)), timeout=REALITY_DEST_CHECK_TIMEOUT) as sock:
             sock.settimeout(REALITY_DEST_CHECK_TIMEOUT)
-            with context.wrap_socket(sock, server_hostname=host):
+            with context.wrap_socket(sock, server_hostname=tls_server_name):
                 ok = True
     except Exception as exc:
-        print(f"REALITY dest check failed: {normalized} ({exc})", file=sys.stderr)
-    REALITY_DEST_CHECK_CACHE[normalized] = ok
+        print(
+            f"REALITY dest check failed: {normalized} "
+            f"with server_name={tls_server_name} ({exc})",
+            file=sys.stderr,
+        )
+    REALITY_DEST_CHECK_CACHE[cache_key] = ok
     return ok
 
 
@@ -1288,18 +1295,6 @@ def retarget_reality_dest(inbound_id: int, requested_dest: str) -> int:
     if wanted_id <= 0:
         raise SystemExit("REALITY inbound id должен быть положительным")
 
-    normalized_dest = normalize_reality_dest(requested_dest)
-    dest_host, _, _dest_port = normalized_dest.rpartition(":")
-    if not normalized_dest or dest_host not in set(list_reality_sni_pool()):
-        raise SystemExit(
-            "Новая REALITY dest должна находиться в общем проверенном SNI pool"
-        )
-    if REALITY_DEST_CHECK and not is_reality_dest_reachable(normalized_dest):
-        raise SystemExit(
-            f"REALITY dest {normalized_dest} недоступна с этой ноды: "
-            "TLS handshake не прошёл"
-        )
-
     _, current_rows = load_xray_inbounds()
     matches = [
         row
@@ -1327,6 +1322,28 @@ def retarget_reality_dest(inbound_id: int, requested_dest: str) -> int:
     if not server_names:
         raise SystemExit(
             f"Inbound id={wanted_id} не имеет сохранённого REALITY serverName"
+        )
+    normalized_dest = normalize_reality_dest(requested_dest)
+    dest_host, _, _dest_port = normalized_dest.rpartition(":")
+    destination_allowed = dest_host in set(list_reality_sni_pool())
+    if not destination_allowed:
+        try:
+            destination_ip = ipaddress.ip_address(dest_host)
+        except ValueError:
+            destination_ip = None
+        destination_allowed = bool(destination_ip and destination_ip.is_global)
+    if not normalized_dest or not destination_allowed:
+        raise SystemExit(
+            "Новая REALITY dest должна быть именем из общего SNI pool "
+            "или публичным глобальным IP"
+        )
+    if REALITY_DEST_CHECK and not is_reality_dest_reachable(
+        normalized_dest,
+        server_name=server_names[0],
+    ):
+        raise SystemExit(
+            f"REALITY dest {normalized_dest} недоступна с этой ноды для "
+            f"сохранённого serverName={server_names[0]}: TLS handshake не прошёл"
         )
     clients = (current.get("settings") or {}).get("clients") or []
     client_count = sum(1 for item in clients if isinstance(item, dict))
