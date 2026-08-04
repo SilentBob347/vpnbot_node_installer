@@ -9,6 +9,8 @@ import socket
 import ssl
 import subprocess
 import sys
+import time
+from copy import deepcopy
 from pathlib import Path
 
 XRAY_STATE_FILE = Path(os.environ.get("XRAY_CORE_INSTALLER_STATE_FILE", "/etc/vpnbot-xray-installer-state.json"))
@@ -408,6 +410,53 @@ def save_xray_inbounds(rows: list[dict]) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def save_xray_inbounds_atomic(rows: list[dict]) -> None:
+    """Replace the managed file durably without exposing a partial JSON file."""
+
+    payload = json.dumps(
+        {"inbounds": rows},
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+    target = XRAY_MANAGED_INBOUNDS_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(f".{target.name}.tmp-{os.getpid()}")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.chmod(0o600)
+        os.replace(temp_path, target)
+        directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def restore_xray_inbounds_atomic(original_bytes: bytes) -> None:
+    target = XRAY_MANAGED_INBOUNDS_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(f".{target.name}.restore-{os.getpid()}")
+    try:
+        with temp_path.open("wb") as handle:
+            handle.write(original_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.chmod(0o600)
+        os.replace(temp_path, target)
+        directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def parse_reserved_ports(raw: str) -> set[int]:
@@ -1205,6 +1254,108 @@ def assert_replace_profile_is_empty_of_clients(rows: list[dict]) -> None:
         )
 
 
+def retarget_reality_dest(inbound_id: int, requested_dest: str) -> int:
+    """Change only REALITY's upstream TLS target, preserving issued links.
+
+    A REALITY client link is bound to the inbound public key, short id and
+    advertised server name. Those fields, the client list and the nginx route
+    must remain unchanged when an upstream ``dest`` becomes incompatible.
+    """
+
+    try:
+        wanted_id = int(inbound_id)
+    except (TypeError, ValueError):
+        raise SystemExit("REALITY inbound id должен быть целым числом") from None
+    if wanted_id <= 0:
+        raise SystemExit("REALITY inbound id должен быть положительным")
+
+    normalized_dest = normalize_reality_dest(requested_dest)
+    dest_host, _, _dest_port = normalized_dest.rpartition(":")
+    if not normalized_dest or dest_host not in set(list_reality_sni_pool()):
+        raise SystemExit(
+            "Новая REALITY dest должна находиться в общем проверенном SNI pool"
+        )
+    if REALITY_DEST_CHECK and not is_reality_dest_reachable(normalized_dest):
+        raise SystemExit(
+            f"REALITY dest {normalized_dest} недоступна с этой ноды: "
+            "TLS handshake не прошёл"
+        )
+
+    _, current_rows = load_xray_inbounds()
+    matches = [
+        row
+        for row in current_rows
+        if isinstance(row, dict) and int(row.get("id") or 0) == wanted_id
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"REALITY inbound id={wanted_id} должен существовать ровно один раз"
+        )
+    current = matches[0]
+    stream = current.get("streamSettings") or {}
+    if str(stream.get("security") or "").strip().lower() != "reality":
+        raise SystemExit(f"Inbound id={wanted_id} не использует REALITY")
+    reality = stream.get("realitySettings") or {}
+    if not isinstance(reality, dict):
+        raise SystemExit(f"Inbound id={wanted_id} имеет некорректные realitySettings")
+
+    old_dest = normalize_reality_dest(str(reality.get("dest") or ""))
+    server_names = [
+        normalize_sni(item)
+        for item in reality.get("serverNames") or []
+        if normalize_sni(item)
+    ]
+    if not server_names:
+        raise SystemExit(
+            f"Inbound id={wanted_id} не имеет сохранённого REALITY serverName"
+        )
+    clients = (current.get("settings") or {}).get("clients") or []
+    client_count = sum(1 for item in clients if isinstance(item, dict))
+    if old_dest == normalized_dest:
+        print(
+            "REALITY dest уже установлена: "
+            f"inbound_id={wanted_id} dest={normalized_dest} "
+            f"clients_preserved={client_count}"
+        )
+        return 0
+
+    original_bytes = XRAY_MANAGED_INBOUNDS_FILE.read_bytes()
+    backup_path = XRAY_MANAGED_INBOUNDS_FILE.with_name(
+        f"{XRAY_MANAGED_INBOUNDS_FILE.name}.bak.retarget-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
+    )
+    backup_path.write_bytes(original_bytes)
+    backup_path.chmod(0o600)
+
+    updated_rows = deepcopy(current_rows)
+    updated = next(row for row in updated_rows if int(row.get("id") or 0) == wanted_id)
+    updated["streamSettings"]["realitySettings"]["dest"] = normalized_dest
+    try:
+        save_xray_inbounds_atomic(updated_rows)
+        sync_xray_reserved_ports(updated_rows)
+        validate_and_restart_xray()
+        subprocess.run([XRAY_SYNC_SCRIPT], check=True)
+    except Exception as exc:
+        restore_xray_inbounds_atomic(original_bytes)
+        try:
+            sync_xray_reserved_ports(current_rows)
+            validate_and_restart_xray()
+            subprocess.run([XRAY_SYNC_SCRIPT], check=True)
+        except Exception:
+            pass
+        raise SystemExit(
+            f"Не удалось сменить REALITY dest; managed file и служба откачены: {type(exc).__name__}"
+        ) from exc
+
+    print("REALITY dest retarget complete")
+    print(f"- inbound_id={wanted_id}")
+    print(f"- server_names_preserved={','.join(server_names)}")
+    print(f"- old_dest={old_dest or '<empty>'}")
+    print(f"- new_dest={normalized_dest}")
+    print(f"- clients_preserved={client_count}")
+    print(f"- backup={backup_path}")
+    return 0
+
+
 def apply_lines_via_xray(lines: list[str], *, replace: bool = False) -> int:
     _, rows = load_xray_inbounds()
     if replace:
@@ -1299,6 +1450,13 @@ def list_titles(groups: list[dict]) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) > 1 and argv[1] == "--list-sni":
         return print_reality_sni_pool()
+    if len(argv) > 1 and argv[1] == "--retarget-reality-dest":
+        if len(argv) != 4:
+            raise SystemExit(
+                "Usage: vpnbot-vless-presets --retarget-reality-dest "
+                "<inbound-id> <new-sni-or-dest>"
+            )
+        return retarget_reality_dest(argv[2], argv[3])
     if len(argv) > 1 and argv[1] == "--line-from-sni":
         if len(argv) < 3:
             raise SystemExit("Usage: vpnbot-vless-presets --line-from-sni <sni> [vless|trojan] [tcp|xhttp] [direct-random|shared-random|443|8443] [--no-flow]")

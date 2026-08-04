@@ -830,5 +830,109 @@ class VlessPresetProfileReplacementTests(unittest.TestCase):
         save.assert_called_once_with([new_row])
 
 
+class VlessPresetRealityRetargetTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = importlib.import_module("assets.vpnbot_vless_presets")
+
+    @staticmethod
+    def _row():
+        return {
+            "id": 123,
+            "tag": "[shared:443] reality",
+            "port": 30001,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "00000000-0000-0000-0000-000000000001",
+                        "email": "tele1_port30001",
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "dest": "www.microsoft.com:443",
+                    "serverNames": ["www.microsoft.com"],
+                    "privateKey": "private-key-must-stay",
+                    "shortIds": ["1122334455667788"],
+                    "settings": {"publicKey": "public-key-must-stay"},
+                },
+            },
+        }
+
+    def test_retarget_changes_only_dest_and_preserves_issued_identity(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            managed = Path(raw_tmp) / "managed.json"
+            original = {"inbounds": [self._row()]}
+            managed.write_text(json.dumps(original), encoding="utf-8")
+            with (
+                mock.patch.object(self.helper, "XRAY_MANAGED_INBOUNDS_FILE", managed),
+                mock.patch.object(
+                    self.helper,
+                    "list_reality_sni_pool",
+                    return_value=["www.microsoft.com", "www.nvidia.com"],
+                ),
+                mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
+                mock.patch.object(self.helper, "sync_xray_reserved_ports"),
+                mock.patch.object(self.helper, "validate_and_restart_xray"),
+                mock.patch.object(self.helper.subprocess, "run"),
+            ):
+                result = self.helper.retarget_reality_dest(123, "www.nvidia.com")
+
+            updated = json.loads(managed.read_text(encoding="utf-8"))
+            expected = self._row()
+            expected["streamSettings"]["realitySettings"]["dest"] = "www.nvidia.com:443"
+            self.assertEqual(0, result)
+            self.assertEqual({"inbounds": [expected]}, updated)
+            backups = list(managed.parent.glob("managed.json.bak.retarget-*"))
+            self.assertEqual(1, len(backups))
+            self.assertEqual(original, json.loads(backups[0].read_text(encoding="utf-8")))
+            self.assertEqual(0o600, backups[0].stat().st_mode & 0o777)
+
+    def test_retarget_rolls_back_exact_original_when_validation_fails(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            managed = Path(raw_tmp) / "managed.json"
+            original = {"inbounds": [self._row()]}
+            original_bytes = json.dumps(original, separators=(",", ":")).encode("utf-8")
+            managed.write_bytes(original_bytes)
+            with (
+                mock.patch.object(self.helper, "XRAY_MANAGED_INBOUNDS_FILE", managed),
+                mock.patch.object(
+                    self.helper,
+                    "list_reality_sni_pool",
+                    return_value=["www.microsoft.com", "www.nvidia.com"],
+                ),
+                mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
+                mock.patch.object(self.helper, "sync_xray_reserved_ports"),
+                mock.patch.object(
+                    self.helper,
+                    "validate_and_restart_xray",
+                    side_effect=[RuntimeError("invalid"), None],
+                ),
+                mock.patch.object(self.helper.subprocess, "run"),
+            ):
+                with self.assertRaisesRegex(SystemExit, "managed file"):
+                    self.helper.retarget_reality_dest(123, "www.nvidia.com")
+
+            self.assertEqual(original_bytes, managed.read_bytes())
+
+    def test_retarget_rejects_non_reality_inbound(self):
+        row = self._row()
+        row["streamSettings"]["security"] = "tls"
+        with (
+            mock.patch.object(self.helper, "load_xray_inbounds", return_value=({"inbounds": [row]}, [row])),
+            mock.patch.object(
+                self.helper,
+                "list_reality_sni_pool",
+                return_value=["www.nvidia.com"],
+            ),
+            mock.patch.object(self.helper, "is_reality_dest_reachable", return_value=True),
+        ):
+            with self.assertRaisesRegex(SystemExit, "не использует REALITY"):
+                self.helper.retarget_reality_dest(123, "www.nvidia.com")
+
+
 if __name__ == "__main__":
     unittest.main()

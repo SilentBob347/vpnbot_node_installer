@@ -65,6 +65,21 @@ Reality inbound, the helper checks TLS reachability of the selected
 dead target such as a temporarily filtered local site from being saved silently.
 If the check fails, choose another SNI from the full pool. Use
 `VPNBOT_REALITY_DEST_CHECK=0` only for a manual emergency override.
+If a previously reachable upstream later proves incompatible with a real
+REALITY client while the inbound already contains issued users, preserve the
+published key, short IDs, `serverNames`, clients, port and nginx route and
+retarget only its upstream TLS destination:
+
+```bash
+vpnbot-vless-presets --retarget-reality-dest <inbound-id> <new-sni-or-dest>
+```
+
+The replacement target must belong to the installed SNI pool and pass a live
+TLS check. The command writes a root-only backup, atomically replaces the
+managed JSON, validates and restarts Xray, synchronizes nginx routes, and rolls
+the original bytes and service state back if any apply step fails. Existing
+client links do not need to be reissued because their public identity is not
+changed.
 New REALITY inbounds use `fp=edge` by default through
 `VPNBOT_REALITY_FINGERPRINT`; ordinary TLS presets use `fp=edge` unless
 `VPNBOT_TLS_FINGERPRINT` is overridden deliberately.
