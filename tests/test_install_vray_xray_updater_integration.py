@@ -416,6 +416,28 @@ class NodeDiskHygieneTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["freed_bytes"], 10)
         self.assertEqual([item[-1] for item in calls], ["clean", "--rotate", "--vacuum-size=256M"])
+        self.assertEqual(report["operations"]["journal_rotate"]["attempts"], 1)
+
+    def test_journal_rotation_retries_a_transient_journald_socket_failure(self):
+        outcomes = [
+            {"ok": False, "returncode": 1, "error": "Connection refused"},
+            {"ok": True, "returncode": 0},
+        ]
+        with mock.patch.object(self.helper, "run", side_effect=outcomes) as run_mock, mock.patch.object(
+            self.helper.time,
+            "sleep",
+        ) as sleep_mock:
+            result = self.helper.run_with_retry(
+                ["/usr/bin/journalctl", "--rotate"],
+                timeout=60,
+                attempts=3,
+                delay_seconds=1.0,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(run_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(1.0)
 
     def test_owned_protocol_configs_are_sorted_and_symlinks_fail_closed(self):
         with tempfile.TemporaryDirectory() as raw_tmp:

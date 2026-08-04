@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -141,6 +142,23 @@ def run(argv: list[str], *, timeout: int) -> dict[str, Any]:
     return result
 
 
+def run_with_retry(
+    argv: list[str],
+    *,
+    timeout: int,
+    attempts: int,
+    delay_seconds: float,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"ok": False, "error": "command-not-run"}
+    for attempt in range(1, attempts + 1):
+        result = run(argv, timeout=timeout)
+        result["attempts"] = attempt
+        if result.get("ok") or attempt == attempts:
+            return result
+        time.sleep(delay_seconds)
+    return result
+
+
 def root_filesystem() -> dict[str, int]:
     usage = shutil.disk_usage("/")
     return {"total_bytes": usage.total, "used_bytes": usage.used, "free_bytes": usage.free}
@@ -253,7 +271,12 @@ def apply(config: dict[str, Any], *, state_dir: Path, lock_path: Path) -> dict[s
 
         journalctl = shutil.which("journalctl")
         if journalctl:
-            operations["journal_rotate"] = run([journalctl, "--rotate"], timeout=60)
+            operations["journal_rotate"] = run_with_retry(
+                [journalctl, "--rotate"],
+                timeout=60,
+                attempts=3,
+                delay_seconds=1.0,
+            )
             operations["journal_vacuum"] = run(
                 [
                     journalctl,
