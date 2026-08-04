@@ -1615,6 +1615,7 @@ EOF
     "listen": "${XRAY_CORE_API_SERVER}",
     "services": [
       "HandlerService",
+      "LoggerService",
       "StatsService"
     ]
   },
@@ -1658,9 +1659,16 @@ ${XRAY_CORE_LOG_DIR}/*.log {
     missingok
     notifempty
     compress
-    delaycompress
-    copytruncate
-    create 0640 root root
+    nodelaycompress
+    nocopytruncate
+    create 0600 root root
+    sharedscripts
+    postrotate
+        if systemctl is-active --quiet vpnbot-xray.service; then
+            ${XRAY_CORE_BIN} api restartlogger --server=${XRAY_CORE_API_SERVER} >/dev/null 2>&1 \
+                || systemctl restart vpnbot-xray.service
+        fi
+    endscript
 }
 EOF
     chmod 644 "${XRAY_LOGROTATE_FILE}" 2>/dev/null || true
@@ -1991,6 +1999,17 @@ install_shared_egress_policy() {
         bash "${installer}"
     rm -f "${installer}"
     log "Installed canonical VPnBot egress policy"
+}
+
+
+install_node_disk_hygiene() {
+    local installer
+    installer="$(mktemp /tmp/vpnbot-node-disk-hygiene-installer.XXXXXX)"
+    download_node_installer_asset "scripts/install_node_disk_hygiene.sh" "${installer}" 755
+    VPNBOT_NODE_INSTALLER_LOCAL_ROOT="${VPNBOT_NODE_INSTALLER_LOCAL_ROOT:-}" \
+    VPNBOT_NODE_INSTALLER_BASE_URL="${VPNBOT_NODE_INSTALLER_BASE_URL}" \
+        bash "${installer}"
+    rm -f "${installer}"
 }
 
 
@@ -3660,6 +3679,7 @@ main() {
     write_direct_helpers
     enable_sync
     run_initial_preset_flow
+    install_node_disk_hygiene
     show_summary
 }
 

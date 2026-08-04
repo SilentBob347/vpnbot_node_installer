@@ -104,6 +104,15 @@ at the same moment. The updater writes events to
 `/var/lib/vpnbot-xray-core-updater/events.jsonl` and keeps recent backups under
 `/var/lib/vpnbot-xray-core-updater/backups`.
 
+Every standalone install also applies the shared physical-node disk policy from
+`assets/vpnbot_node_disk_hygiene.json`. The persistent
+`vpnbot-node-disk-hygiene.timer` periodically removes only reproducible APT
+package archives and rotates/vacuums archived systemd journals within fixed
+size and age limits. It never scans or deletes VPN databases, credentials,
+configuration, protocol state or unknown log directories. All other VPnBot
+protocol installers use the same public installer so one VPS has one cleanup
+owner even when several protocols share it.
+
 SSH lockdown is intentionally not installed by this Xray installer by default.
 The canonical SSH bootstrap is the separate `sshsecurity.sh` gist and repo file.
 If the installer-local legacy SSH guard is explicitly enabled with

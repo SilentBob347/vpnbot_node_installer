@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "policy_id": "vpnbot-node-disk-hygiene-v1",
+  "apt": {
+    "clean_archives": true,
+    "lock_timeout_seconds": 30
+  },
+  "journal": {
+    "system_max_use": "512M",
+    "system_keep_free": "1G",
+    "system_max_file_size": "64M",
+    "runtime_max_use": "128M",
+    "runtime_keep_free": "256M",
+    "runtime_max_file_size": "32M",
+    "max_retention_sec": "14day",
+    "max_file_sec": "1day",
+    "vacuum_size": "512M",
+    "vacuum_time": "14day"
+  },
+  "timer": {
+    "on_boot_sec": "10min",
+    "on_unit_active_sec": "6h",
+    "randomized_delay_sec": "30min"
+  }
+}

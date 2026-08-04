@@ -40,6 +40,26 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn("write_xray_core_updater_assets", main_body)
         self.assertNotIn("install_3xui_noninteractive", main_body)
 
+    def test_xray_logrotate_reopens_logger_without_copying_the_live_file(self):
+        self.assertIn('"LoggerService"', self.text)
+        self.assertIn("api restartlogger --server=${XRAY_CORE_API_SERVER}", self.text)
+        self.assertIn("nodelaycompress", self.text)
+        self.assertIn("nocopytruncate", self.text)
+        self.assertNotIn("    copytruncate\n", self.text)
+        self.assertLess(
+            self.text.index("api restartlogger --server=${XRAY_CORE_API_SERVER}"),
+            self.text.index("|| systemctl restart vpnbot-xray.service"),
+        )
+
+    def test_xray_main_path_installs_shared_node_disk_hygiene_last(self):
+        main_start = self.text.rindex("main() {")
+        main_body = self.text[main_start:]
+        self.assertIn("install_node_disk_hygiene", main_body)
+        self.assertLess(main_body.index("run_initial_preset_flow"), main_body.index("install_node_disk_hygiene"))
+        self.assertTrue((REPO_ROOT / "scripts" / "install_node_disk_hygiene.sh").is_file())
+        self.assertTrue((REPO_ROOT / "assets" / "vpnbot_node_disk_hygiene.py").is_file())
+        self.assertTrue((REPO_ROOT / "assets" / "vpnbot_node_disk_hygiene.json").is_file())
+
     def test_legacy_xui_installer_code_is_removed(self):
         forbidden_in_installer = [
             "XUI_UPSTREAM_INSTALL_URL",
@@ -172,6 +192,7 @@ class SharedEgressPolicyTests(unittest.TestCase):
             self.helper.exception_addresses(self.config)
 
         resolver.assert_not_called()
+
 
     def test_dns_policy_uses_specific_exception_before_blocked_suffix(self):
         with tempfile.TemporaryDirectory() as raw_tmp, mock.patch.object(
@@ -319,6 +340,67 @@ class SharedEgressPolicyTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first.count(self.helper.HYSTERIA_BEGIN), 1)
+
+
+class NodeDiskHygieneTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = importlib.import_module("assets.vpnbot_node_disk_hygiene")
+        self.config_path = REPO_ROOT / "assets" / "vpnbot_node_disk_hygiene.json"
+        self.config = self.helper.load_config(self.config_path)
+
+    def test_policy_renders_bounded_journal_and_persistent_timer(self):
+        journald = self.helper.render_journald(self.config)
+        timer = self.helper.render_timer(self.config)
+
+        self.assertIn("SystemMaxUse=512M", journald)
+        self.assertIn("SystemKeepFree=1G", journald)
+        self.assertIn("MaxRetentionSec=14day", journald)
+        self.assertIn("OnUnitActiveSec=6h", timer)
+        self.assertIn("Persistent=true", timer)
+
+    def test_installer_owns_only_reproducible_cache_and_archived_journal_cleanup(self):
+        installer = (REPO_ROOT / "scripts" / "install_node_disk_hygiene.sh").read_text(encoding="utf-8")
+        helper = (REPO_ROOT / "assets" / "vpnbot_node_disk_hygiene.py").read_text(encoding="utf-8")
+
+        self.assertIn('"clean"', helper)
+        self.assertIn('"--rotate"', helper)
+        self.assertIn('f"--vacuum-time=', helper)
+        self.assertIn('f"--vacuum-size=', helper)
+        self.assertNotIn("autoremove", installer + helper)
+        self.assertNotIn("/opt/vpnbot/xray-core/logs", installer + helper)
+        self.assertNotIn("/var/log/awg", installer + helper)
+        self.assertNotIn("/home", helper)
+        self.assertIn("vpnbot-node-disk-hygiene.timer", installer)
+
+    def test_apply_continues_journal_cleanup_if_apt_cleanup_fails(self):
+        calls = []
+
+        def fake_run(argv, *, timeout):
+            calls.append(list(argv))
+            return {"ok": argv[-1] != "clean", "returncode": 1 if argv[-1] == "clean" else 0}
+
+        with tempfile.TemporaryDirectory() as raw_tmp, mock.patch.object(
+            self.helper.shutil,
+            "which",
+            side_effect=lambda name: f"/usr/bin/{name}",
+        ), mock.patch.object(self.helper, "run", side_effect=fake_run), mock.patch.object(
+            self.helper,
+            "root_filesystem",
+            side_effect=[
+                {"total_bytes": 100, "used_bytes": 90, "free_bytes": 10},
+                {"total_bytes": 100, "used_bytes": 80, "free_bytes": 20},
+            ],
+        ), mock.patch.object(self.helper, "apt_archive_bytes", side_effect=[8, 0]):
+            root = Path(raw_tmp)
+            report = self.helper.apply(
+                self.config,
+                state_dir=root / "state",
+                lock_path=root / "lock",
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["freed_bytes"], 10)
+        self.assertEqual([item[-1] for item in calls], ["clean", "--rotate", "--vacuum-size=512M"])
 
 
 class XrayRouteHealRulesTests(unittest.TestCase):
