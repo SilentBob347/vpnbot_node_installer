@@ -624,7 +624,6 @@ def cmd_ensure_client(ns: argparse.Namespace) -> dict[str, Any]:
 def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
     path = Path(ns.managed_file)
     with _FileLock(_lock_path(ns)):
-        active_revoke_capability = _xray_supports_active_session_revoke(ns)
         original_payload = _load_payload(path)
         payload = json.loads(json.dumps(original_payload, ensure_ascii=False))
         raw = _find_raw_inbound(payload, int(ns.inbound_id))
@@ -638,6 +637,7 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
 
         if not target:
             if tag and api_email:
+                active_revoke_capability = _xray_supports_active_session_revoke(ns)
                 code, out, err = _api_remove_user(ns, tag, api_email)
                 if code != 0:
                     raise XrayCtlError(
@@ -703,6 +703,7 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
                 "active_sessions_interrupted": False,
             }
 
+        active_revoke_capability = _xray_supports_active_session_revoke(ns)
         _atomic_write(path, payload)
         try:
             _validate_config(ns)
@@ -755,7 +756,6 @@ def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
     expected_user_id = int(ns.expected_user_id or 0)
     path = Path(ns.managed_file)
     with _FileLock(_lock_path(ns)):
-        active_revoke_capability = _xray_supports_active_session_revoke(ns)
         original_payload = _load_payload(path)
         payload = json.loads(json.dumps(original_payload, ensure_ascii=False))
         raw = _find_raw_inbound(payload, int(ns.inbound_id))
@@ -804,6 +804,7 @@ def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
         ) != 1:
             raise XrayCtlError("exact client email is duplicated in inbound")
 
+        active_revoke_capability = _xray_supports_active_session_revoke(ns)
         settings["clients"] = [client for client in clients if client is not target]
         _atomic_write(path, payload)
         try:
