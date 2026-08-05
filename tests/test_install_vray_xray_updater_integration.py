@@ -34,6 +34,21 @@ class InstallVrayXrayUpdaterIntegrationTests(unittest.TestCase):
         self.assertIn('XRAY_CORE_UPDATER_ENABLED="${XRAY_CORE_UPDATER_ENABLED:-1}"', self.text)
         self.assertIn("Installed Xray-core auto-update timer:", self.text)
 
+    def test_xray_core_download_requires_vpnbot_active_revoke_capability(self):
+        self.assertIn("youtubediscord/Xray-core/releases", self.text)
+        self.assertIn(
+            'XRAY_CORE_REQUIRED_CAPABILITY="${XRAY_CORE_REQUIRED_CAPABILITY:-vpnbot-active-revoke-v1}"',
+            self.text,
+        )
+        self.assertIn(
+            'grep -Fq "VPnBot capability: ${XRAY_CORE_REQUIRED_CAPABILITY}"',
+            self.text,
+        )
+        self.assertIn(
+            "Environment=XRAY_CORE_REQUIRED_CAPABILITY=${XRAY_CORE_REQUIRED_CAPABILITY}",
+            self.text,
+        )
+
     def test_xray_core_main_path_installs_updater(self):
         main_start = self.text.rindex("main() {")
         main_body = self.text[main_start:]
@@ -1111,6 +1126,35 @@ class VlessPresetRealityRetargetTests(unittest.TestCase):
                     )
 
             self.assertEqual(original_bytes, managed.read_bytes())
+
+
+class XrayCtlActiveRevokeTests(unittest.TestCase):
+    def setUp(self):
+        self.ctl = importlib.import_module("assets.vpnbot_xrayctl")
+
+    def test_capable_core_proves_exact_cutoff_without_restart(self):
+        ns = mock.Mock()
+        with mock.patch.object(self.ctl, "_restart_xray_service") as restart:
+            result = self.ctl._prove_active_sessions_interrupted(
+                ns,
+                capability_present=True,
+                runtime_removed=True,
+            )
+
+        self.assertEqual(result, (False, True))
+        restart.assert_not_called()
+
+    def test_old_core_uses_immediate_restart_without_cooldown(self):
+        ns = mock.Mock()
+        with mock.patch.object(self.ctl, "_restart_xray_service") as restart:
+            result = self.ctl._prove_active_sessions_interrupted(
+                ns,
+                capability_present=False,
+                runtime_removed=True,
+            )
+
+        self.assertEqual(result, (True, True))
+        restart.assert_called_once_with(ns)
 
 
 if __name__ == "__main__":

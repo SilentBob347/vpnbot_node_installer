@@ -72,6 +72,75 @@ class XrayCoreUpdaterTests(unittest.TestCase):
         self.assertFalse(updater.is_update_needed("Xray 26.6.1 (Xray)", "v26.3.27"))
         self.assertFalse(updater.is_update_needed("Xray 27.0.0 (Xray)", "v26.6.1"))
 
+    def test_missing_required_capability_forces_same_version_replacement(self):
+        updater = self.require_updater()
+
+        self.assertTrue(
+            updater.update_required(
+                "Xray 26.7.28 (Xray)",
+                "v26.7.28-vpnbot.1",
+                capability_present=False,
+            )
+        )
+        self.assertFalse(
+            updater.update_required(
+                "Xray 26.7.28 (Xray)",
+                "v26.7.28-vpnbot.1",
+                capability_present=True,
+            )
+        )
+
+    def test_missing_capability_never_downgrades_newer_binary(self):
+        updater = self.require_updater()
+
+        with self.assertRaisesRegex(RuntimeError, "refusing an automatic downgrade"):
+            updater.update_required(
+                "Xray 27.0.0 (Xray)",
+                "v26.7.28-vpnbot.1",
+                capability_present=False,
+            )
+
+    def test_release_defaults_point_to_public_vpnbot_fork(self):
+        updater = self.require_updater()
+
+        self.assertIn("youtubediscord/Xray-core", updater.DEFAULT_RELEASES_API_URL)
+        self.assertIn("youtubediscord/Xray-core", updater.DEFAULT_LATEST_DOWNLOAD_BASE)
+        self.assertEqual(updater.DEFAULT_REQUIRED_CAPABILITY, "vpnbot-active-revoke-v1")
+
+    def test_candidate_without_required_capability_is_rejected_before_config_validation(self):
+        updater = self.require_updater()
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            candidate = tmp / "xray"
+            candidate.write_text("binary", encoding="utf-8")
+            settings = updater.Settings(
+                xray_bin=tmp / "installed-xray",
+                config_dir=tmp / "config",
+                share_dir=tmp / "share",
+                service_name="vpnbot-xray.service",
+                releases_api_url="https://api.example/releases",
+                latest_download_base="https://github.example/releases/latest/download",
+                latest_release_url="https://github.example/releases/latest",
+                release_channel="stable",
+                target_version="latest",
+                state_dir=tmp / "state",
+                events_file=tmp / "state/events.jsonl",
+                backup_dir=tmp / "state/backups",
+                keep_backups=1,
+                timeout_seconds=5,
+            )
+
+            with mock.patch.object(
+                updater,
+                "xray_version_statement",
+                return_value="Xray 26.7.28 without capability",
+            ), mock.patch.object(updater, "run_command") as run_command:
+                with self.assertRaisesRegex(RuntimeError, "does not provide required capability"):
+                    updater.validate_candidate(candidate, settings, tmp)
+
+            run_command.assert_not_called()
+
     def test_release_tag_is_parsed_from_github_download_redirect(self):
         updater = self.require_updater()
 

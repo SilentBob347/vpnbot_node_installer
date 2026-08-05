@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Important: install.sh fetches the latest branch archive through codeload.github.com; raw fallback downloads use refs/heads/main plus cache busting.
 # Supported backend mode:
-# - xray-core -> standalone official Xray-core in a dedicated folder.
+# - xray-core -> standalone VPnBot-maintained Xray-core in a dedicated folder.
 # Architecture:
 # - AWG keeps UDP/443
 # - nginx stream owns shared TCP entry ports
@@ -190,9 +190,10 @@ XRAY_SYNC_TIMER="${XRAY_SYNC_TIMER:-/etc/systemd/system/vpnbot-xray-sync-routes.
 XRAY_SYNC_STATE_DIR="${XRAY_SYNC_STATE_DIR:-/var/lib/vpnbot-xray-sync}"
 XRAY_CORE_RELEASE_CHANNEL="${XRAY_CORE_RELEASE_CHANNEL:-stable}"
 XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-latest}"
-XRAY_CORE_RELEASES_API_URL="${XRAY_CORE_RELEASES_API_URL:-https://api.github.com/repos/XTLS/Xray-core/releases}"
-XRAY_CORE_LATEST_DOWNLOAD_BASE="${XRAY_CORE_LATEST_DOWNLOAD_BASE:-https://github.com/XTLS/Xray-core/releases/latest/download}"
-XRAY_CORE_LATEST_RELEASE_URL="${XRAY_CORE_LATEST_RELEASE_URL:-https://github.com/XTLS/Xray-core/releases/latest}"
+XRAY_CORE_RELEASES_API_URL="${XRAY_CORE_RELEASES_API_URL:-https://api.github.com/repos/youtubediscord/Xray-core/releases}"
+XRAY_CORE_LATEST_DOWNLOAD_BASE="${XRAY_CORE_LATEST_DOWNLOAD_BASE:-https://github.com/youtubediscord/Xray-core/releases/latest/download}"
+XRAY_CORE_LATEST_RELEASE_URL="${XRAY_CORE_LATEST_RELEASE_URL:-https://github.com/youtubediscord/Xray-core/releases/latest}"
+XRAY_CORE_REQUIRED_CAPABILITY="${XRAY_CORE_REQUIRED_CAPABILITY:-vpnbot-active-revoke-v1}"
 XRAY_CORE_UPDATER_SCRIPT="${XRAY_CORE_UPDATER_SCRIPT:-/usr/local/bin/vpnbot-xray-core-updater}"
 XRAY_CORE_UPDATER_SERVICE_NAME="${XRAY_CORE_UPDATER_SERVICE_NAME:-vpnbot-xray-core-update.service}"
 XRAY_CORE_UPDATER_SERVICE_FILE="${XRAY_CORE_UPDATER_SERVICE_FILE:-/etc/systemd/system/${XRAY_CORE_UPDATER_SERVICE_NAME}}"
@@ -2278,6 +2279,7 @@ Environment=XRAY_CORE_LATEST_DOWNLOAD_BASE=${XRAY_CORE_LATEST_DOWNLOAD_BASE}
 Environment=XRAY_CORE_LATEST_RELEASE_URL=${XRAY_CORE_LATEST_RELEASE_URL}
 Environment=XRAY_CORE_RELEASE_CHANNEL=${XRAY_CORE_RELEASE_CHANNEL}
 Environment=XRAY_CORE_VERSION=${XRAY_CORE_VERSION}
+Environment=XRAY_CORE_REQUIRED_CAPABILITY=${XRAY_CORE_REQUIRED_CAPABILITY}
 Environment=XRAY_CORE_UPDATER_STATE_DIR=${XRAY_CORE_UPDATER_STATE_DIR}
 Environment=XRAY_CORE_UPDATER_EVENTS_FILE=${XRAY_CORE_UPDATER_EVENTS_FILE}
 Environment=XRAY_CORE_UPDATER_BACKUP_DIR=${XRAY_CORE_UPDATER_BACKUP_DIR}
@@ -2344,6 +2346,12 @@ with zipfile.ZipFile(archive_path) as zf:
     zf.extractall(extract_dir)
 PY
 
+    if ! "${extract_dir}/xray" version | grep -Fq "VPnBot capability: ${XRAY_CORE_REQUIRED_CAPABILITY}"; then
+        err "Downloaded Xray-core archive lacks required capability ${XRAY_CORE_REQUIRED_CAPABILITY}"
+        rm -rf "${tmp_dir}"
+        exit 1
+    fi
+
     write_xray_core_base_configs
 
     install -m 755 "${extract_dir}/xray" "${XRAY_CORE_BIN}"
@@ -2377,7 +2385,7 @@ PY
     fi
 
     rm -rf "${tmp_dir}"
-    log "Installed official Xray-core ${release_tag:-unknown} into ${XRAY_CORE_ROOT}"
+    log "Installed VPnBot-maintained Xray-core ${release_tag:-unknown} into ${XRAY_CORE_ROOT}"
     info "Standalone Xray service: ${XRAY_CORE_SERVICE_NAME}"
 }
 

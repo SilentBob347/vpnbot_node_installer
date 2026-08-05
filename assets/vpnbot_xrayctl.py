@@ -25,6 +25,7 @@ DEFAULT_XRAY_SERVICE_NAME = "vpnbot-xray.service"
 DEFAULT_HANDLER_MISMATCH_RESTART_COOLDOWN_SECONDS = 900
 DEFAULT_RUNTIME_REMOVE_ZERO_RESTART_COOLDOWN_SECONDS = 900
 DEFAULT_RESTART_STATE_FILE = "/var/lib/vpnbot-xrayctl/restart_state.json"
+DEFAULT_REQUIRED_ACTIVE_REVOKE_CAPABILITY = "vpnbot-active-revoke-v1"
 
 
 class XrayCtlError(RuntimeError):
@@ -303,6 +304,33 @@ def _api_remove_user(ns: argparse.Namespace, tag: str, email: str) -> tuple[int,
         [str(ns.xray_bin), "api", "rmu", f"--server={ns.api_server}", f"-tag={tag}", email],
         timeout=30,
     )
+
+
+def _xray_supports_active_session_revoke(ns: argparse.Namespace) -> bool:
+    code, out, _err = _run([str(ns.xray_bin), "version"], timeout=10)
+    return code == 0 and DEFAULT_REQUIRED_ACTIVE_REVOKE_CAPABILITY in str(out or "")
+
+
+def _prove_active_sessions_interrupted(
+    ns: argparse.Namespace,
+    *,
+    capability_present: bool,
+    runtime_removed: bool,
+) -> tuple[bool, bool]:
+    """Return ``(restart_applied, active_sessions_interrupted)``.
+
+    The maintained Xray build closes the exact user's tracked sessions inside
+    ``RemoveUser``. During a mixed-version rollout an older core can only prove
+    the same security outcome by restarting from the already validated managed
+    snapshot. This fallback is deliberately not cooldown-limited: a payment or
+    access revocation must never be reported complete while an old authenticated
+    stream can continue carrying traffic.
+    """
+
+    if capability_present and runtime_removed:
+        return False, True
+    _restart_xray_service(ns)
+    return True, True
 
 
 def _load_restart_state(path: Path) -> dict[str, float]:
@@ -596,6 +624,7 @@ def cmd_ensure_client(ns: argparse.Namespace) -> dict[str, Any]:
 def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
     path = Path(ns.managed_file)
     with _FileLock(_lock_path(ns)):
+        active_revoke_capability = _xray_supports_active_session_revoke(ns)
         original_payload = _load_payload(path)
         payload = json.loads(json.dumps(original_payload, ensure_ascii=False))
         raw = _find_raw_inbound(payload, int(ns.inbound_id))
@@ -615,14 +644,41 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
                         f"xray api runtime-only remove failed: exit={code} stdout={out[-500:]} stderr={err[-500:]}"
                     )
                 runtime_removed = not _api_removed_no_users(out)
-                return {"ok": True, "removed": runtime_removed, "runtime_only": runtime_removed}
-            return {"ok": True, "removed": False, "runtime_only": False}
+                restart_applied, active_sessions_interrupted = _prove_active_sessions_interrupted(
+                    ns,
+                    capability_present=active_revoke_capability,
+                    runtime_removed=runtime_removed,
+                )
+                return {
+                    "ok": True,
+                    "removed": runtime_removed or restart_applied,
+                    "runtime_only": runtime_removed,
+                    "runtime_removed": runtime_removed,
+                    "restart_applied": restart_applied,
+                    "active_sessions_interrupted": active_sessions_interrupted,
+                }
+            return {
+                "ok": True,
+                "removed": False,
+                "runtime_only": False,
+                "active_sessions_interrupted": False,
+            }
 
         if not isinstance(settings, dict):
-            return {"ok": True, "removed": False, "runtime_only": False}
+            return {
+                "ok": True,
+                "removed": False,
+                "runtime_only": False,
+                "active_sessions_interrupted": False,
+            }
         clients = settings.get("clients", [])
         if not isinstance(clients, list):
-            return {"ok": True, "removed": False, "runtime_only": False}
+            return {
+                "ok": True,
+                "removed": False,
+                "runtime_only": False,
+                "active_sessions_interrupted": False,
+            }
 
         target_email = str(target.get("email") or "")
         target_id = _extract_client_identifier(target, inbound.get("protocol"))
@@ -640,28 +696,43 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
             kept.append(client)
         settings["clients"] = kept
         if not removed:
-            return {"ok": True, "removed": False, "runtime_only": False}
+            return {
+                "ok": True,
+                "removed": False,
+                "runtime_only": False,
+                "active_sessions_interrupted": False,
+            }
 
         _atomic_write(path, payload)
         try:
             _validate_config(ns)
-            code, out, err = _api_remove_user(ns, tag, target_email)
-            if code != 0 and _api_reports_handler_missing(out, err):
-                _maybe_restart_xray_service_for_handler_mismatch(ns)
-                restarted_for_handler_mismatch = True
-                code, out, err = _api_remove_user(ns, tag, target_email)
-            else:
-                restarted_for_handler_mismatch = False
-            if code != 0:
-                raise XrayCtlError(f"xray api remove user failed: exit={code} stdout={out[-500:]} stderr={err[-500:]}")
-            runtime_removed = not _api_removed_no_users(out)
-            restart_applied = False
-            if not runtime_removed:
-                _maybe_restart_xray_service_for_runtime_remove_zero(ns)
-                restart_applied = True
         except Exception:
+            # No live mutation has happened yet, so validation failure may
+            # still restore the original managed snapshot safely.
             _atomic_write(path, original_payload)
             raise
+
+        # From the first API attempt onward the managed key remains absent.
+        # Restoring it after a lost API response or a failed safety restart
+        # could resurrect a credential that Xray has already deleted.
+        code, out, err = _api_remove_user(ns, tag, target_email)
+        if code != 0 and _api_reports_handler_missing(out, err):
+            _maybe_restart_xray_service_for_handler_mismatch(ns)
+            restarted_for_handler_mismatch = True
+            code, out, err = _api_remove_user(ns, tag, target_email)
+        else:
+            restarted_for_handler_mismatch = False
+        if code != 0:
+            raise XrayCtlError(
+                f"xray api remove user failed: exit={code} "
+                f"stdout={out[-500:]} stderr={err[-500:]}"
+            )
+        runtime_removed = not _api_removed_no_users(out)
+        restart_applied, active_sessions_interrupted = _prove_active_sessions_interrupted(
+            ns,
+            capability_present=active_revoke_capability,
+            runtime_removed=runtime_removed,
+        )
 
         return {
             "ok": True,
@@ -670,6 +741,7 @@ def cmd_remove_client(ns: argparse.Namespace) -> dict[str, Any]:
             "email": target_email,
             "runtime_removed": runtime_removed,
             "restart_applied": restart_applied,
+            "active_sessions_interrupted": active_sessions_interrupted,
             "handler_mismatch_restarted": restarted_for_handler_mismatch,
         }
 
@@ -683,11 +755,17 @@ def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
     expected_user_id = int(ns.expected_user_id or 0)
     path = Path(ns.managed_file)
     with _FileLock(_lock_path(ns)):
+        active_revoke_capability = _xray_supports_active_session_revoke(ns)
         original_payload = _load_payload(path)
         payload = json.loads(json.dumps(original_payload, ensure_ascii=False))
         raw = _find_raw_inbound(payload, int(ns.inbound_id))
         if raw is None:
-            return {"ok": True, "removed": False, "runtime_only": False}
+            return {
+                "ok": True,
+                "removed": False,
+                "runtime_only": False,
+                "active_sessions_interrupted": False,
+            }
 
         inbound = _normalize_inbound(raw)
         settings = raw.get("settings")
@@ -702,7 +780,12 @@ def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
             and _extract_client_identifier(client, inbound.get("protocol")) == target_id
         ]
         if not matches:
-            return {"ok": True, "removed": False, "runtime_only": False}
+            return {
+                "ok": True,
+                "removed": False,
+                "runtime_only": False,
+                "active_sessions_interrupted": False,
+            }
         if len(matches) != 1:
             raise XrayCtlError("exact client identifier is duplicated in inbound")
 
@@ -749,10 +832,11 @@ def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
                 f"stdout={out[-500:]} stderr={err[-500:]}"
             )
         runtime_removed = not _api_removed_no_users(out)
-        restart_applied = False
-        if not runtime_removed:
-            _maybe_restart_xray_service_for_runtime_remove_zero(ns)
-            restart_applied = True
+        restart_applied, active_sessions_interrupted = _prove_active_sessions_interrupted(
+            ns,
+            capability_present=active_revoke_capability,
+            runtime_removed=runtime_removed,
+        )
 
         return {
             "ok": True,
@@ -760,6 +844,7 @@ def cmd_remove_client_by_identifier(ns: argparse.Namespace) -> dict[str, Any]:
             "runtime_only": False,
             "runtime_removed": runtime_removed,
             "restart_applied": restart_applied,
+            "active_sessions_interrupted": active_sessions_interrupted,
             "handler_mismatch_restarted": restarted_for_handler_mismatch,
         }
 

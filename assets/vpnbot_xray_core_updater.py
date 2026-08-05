@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_RELEASES_API_URL = "https://api.github.com/repos/XTLS/Xray-core/releases"
-DEFAULT_LATEST_DOWNLOAD_BASE = "https://github.com/XTLS/Xray-core/releases/latest/download"
+DEFAULT_RELEASES_API_URL = "https://api.github.com/repos/youtubediscord/Xray-core/releases"
+DEFAULT_LATEST_DOWNLOAD_BASE = "https://github.com/youtubediscord/Xray-core/releases/latest/download"
+DEFAULT_LATEST_RELEASE_URL = "https://github.com/youtubediscord/Xray-core/releases/latest"
+DEFAULT_REQUIRED_CAPABILITY = "vpnbot-active-revoke-v1"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -71,7 +73,7 @@ def load_settings() -> Settings:
         service_name=env("XRAY_CORE_SERVICE_NAME", "vpnbot-xray.service"),
         releases_api_url=env("XRAY_CORE_RELEASES_API_URL", DEFAULT_RELEASES_API_URL),
         latest_download_base=env("XRAY_CORE_LATEST_DOWNLOAD_BASE", DEFAULT_LATEST_DOWNLOAD_BASE),
-        latest_release_url=env("XRAY_CORE_LATEST_RELEASE_URL", "https://github.com/XTLS/Xray-core/releases/latest"),
+        latest_release_url=env("XRAY_CORE_LATEST_RELEASE_URL", DEFAULT_LATEST_RELEASE_URL),
         release_channel=env("XRAY_CORE_RELEASE_CHANNEL", "stable").lower() or "stable",
         target_version=env("XRAY_CORE_VERSION", "latest") or "latest",
         state_dir=state_dir,
@@ -359,12 +361,38 @@ def run_command(args: list[str], *, timeout: int, env_vars: dict[str, str] | Non
 
 
 def current_xray_version(xray_bin: Path, timeout: int) -> str:
+    statement = xray_version_statement(xray_bin, timeout)
+    return statement.splitlines()[0].strip() if statement else ""
+
+
+def required_capability() -> str:
+    return env("XRAY_CORE_REQUIRED_CAPABILITY", DEFAULT_REQUIRED_CAPABILITY) or DEFAULT_REQUIRED_CAPABILITY
+
+
+def xray_version_statement(xray_bin: Path, timeout: int) -> str:
     if not xray_bin.exists():
         return ""
     result = run_command([str(xray_bin), "version"], timeout=timeout)
     if result.returncode != 0:
         return ""
-    return result.stdout.splitlines()[0].strip() if result.stdout else ""
+    return str(result.stdout or "").strip()
+
+
+def xray_has_required_capability(xray_bin: Path, timeout: int) -> bool:
+    return required_capability() in xray_version_statement(xray_bin, timeout)
+
+
+def update_required(current_version: str, target_version: str, *, capability_present: bool) -> bool:
+    if capability_present:
+        return is_update_needed(current_version, target_version)
+    current_parts = version_number_parts(current_version)
+    target_parts = version_number_parts(target_version)
+    if current_parts and target_parts and current_parts > target_parts:
+        raise RuntimeError(
+            "Installed Xray-core is newer than the latest VPnBot capability build; "
+            "refusing an automatic downgrade"
+        )
+    return True
 
 
 def download_file(url: str, target: Path, timeout: int) -> None:
@@ -414,6 +442,12 @@ def extract_archive(archive_path: Path, extract_dir: Path) -> None:
 
 
 def validate_candidate(candidate_bin: Path, settings: Settings, asset_dir: Path) -> None:
+    version_statement = xray_version_statement(candidate_bin, settings.timeout_seconds)
+    if required_capability() not in version_statement:
+        raise RuntimeError(
+            "Downloaded Xray-core binary does not provide required capability "
+            f"{required_capability()}"
+        )
     result = run_command(
         [str(candidate_bin), "run", "-confdir", str(settings.config_dir), "-dump"],
         timeout=settings.timeout_seconds,
@@ -599,13 +633,34 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         archive_name = archive_name_for_machine()
         release = resolve_release(settings, archive_name)
-        current = current_xray_version(settings.xray_bin, settings.timeout_seconds)
-        if not force and not is_update_needed(current, release.tag):
-            emit_event(settings, "already_current", current_version=current, target_version=release.tag)
+        current_statement = xray_version_statement(settings.xray_bin, settings.timeout_seconds)
+        current = current_statement.splitlines()[0].strip() if current_statement else ""
+        capability_present = required_capability() in current_statement
+        needs_update = update_required(
+            current,
+            release.tag,
+            capability_present=capability_present,
+        )
+        if not force and not needs_update:
+            emit_event(
+                settings,
+                "already_current",
+                current_version=current,
+                target_version=release.tag,
+                required_capability=required_capability(),
+                capability_present=True,
+            )
             print(f"Xray-core already current: {current} target={release.tag}")
             return 0
         if check_only:
-            emit_event(settings, "update_available", current_version=current, target_version=release.tag)
+            emit_event(
+                settings,
+                "update_available",
+                current_version=current,
+                target_version=release.tag,
+                required_capability=required_capability(),
+                capability_present=capability_present,
+            )
             print(f"Xray-core update available: current={current or '<unknown>'} target={release.tag}")
             return 0
 
@@ -630,6 +685,11 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
             try:
                 install_candidate(extract_dir, settings)
                 restart_xray(settings)
+                if not xray_has_required_capability(settings.xray_bin, settings.timeout_seconds):
+                    raise RuntimeError(
+                        "Updated Xray-core service lacks required capability "
+                        f"{required_capability()}"
+                    )
             except Exception as exc:
                 restore_backup(backup, settings)
                 try:
@@ -653,6 +713,8 @@ def run_update(settings: Settings, *, check_only: bool = False, force: bool = Fa
                 previous_version=current,
                 target_version=release.tag,
                 installed_version=installed,
+                required_capability=required_capability(),
+                capability_present=True,
                 backup=str(backup),
                 migrated_config_files=[str(path) for path in migration.changed_files],
             )

@@ -55,9 +55,12 @@ files to stay readable and testable as normal files:
 - `assets/vpnbot_xray_sync_routes.py` - nginx route sync helper for standalone
   Xray-core managed inbounds.
 - `assets/vpnbot_xray_core_updater.py` - safe standalone Xray-core updater. It
-  checks official stable releases, validates the current config with the new
-  binary before replacing it, keeps backups, restarts `vpnbot-xray.service`, and
-  rolls back automatically if the service does not return to active state.
+  follows the public VPnBot-maintained Xray-core release channel, rejects a
+  binary that lacks the `vpnbot-active-revoke-v1` capability, validates the
+  current config before replacement, keeps backups, restarts
+  `vpnbot-xray.service`, and rolls back automatically if the service does not
+  return to active state. The maintained source and immutable release archives
+  live at `https://github.com/youtubediscord/Xray-core`.
 
 REALITY presets keep the full shared SNI pool available. Before writing a new
 Reality inbound, the helper checks TLS reachability of the selected
@@ -140,7 +143,10 @@ This is the binary auto-update path for `/opt/vpnbot/xray-core/bin/xray`. The
 timer runs once per day with a large random delay so the fleet does not restart
 at the same moment. The updater writes events to
 `/var/lib/vpnbot-xray-core-updater/events.jsonl` and keeps recent backups under
-`/var/lib/vpnbot-xray-core-updater/backups`.
+`/var/lib/vpnbot-xray-core-updater/backups`. A binary is eligible only when
+`xray version` reports `VPnBot capability: vpnbot-active-revoke-v1`; this is the
+contract that makes `RemoveUser` interrupt already active VLESS sessions rather
+than only blocking new handshakes.
 
 Every standalone install also applies the shared physical-node disk policy from
 `assets/vpnbot_node_disk_hygiene.json`. The persistent
